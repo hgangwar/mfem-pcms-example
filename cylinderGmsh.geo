@@ -99,7 +99,7 @@ Volume(129) = {128};
 
 Extrude {0, 0, 0.12} { Surface{my_new_surfs[1]}; }
 
-// The following command permits to manually assign a mesh size to some of the
+// The followding command permits to manually assign a mesh size to some of the
 // new points:
 
 MeshSize {103, 105, 109, 102, 28, 24, 6, 5} = lc * 3;
