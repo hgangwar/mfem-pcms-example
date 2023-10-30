@@ -8,6 +8,3 @@
 *.bcf
 *.xml
 *.gz
-
-# ignore all the pdf files
-*.pdf
