@@ -1,52 +1,36 @@
-//                       MFEM Example 11 - Parallel Version
-//
-// Compile with: make ex11p
-//
-// Sample runs:  mpirun -np 4 ex11p -m ../data/square-disc.mesh
-//               mpirun -np 4 ex11p -m ../data/star.mesh
-//               mpirun -np 4 ex11p -m ../data/star-mixed.mesh
-//               mpirun -np 4 ex11p -m ../data/escher.mesh
-//               mpirun -np 4 ex11p -m ../data/fichera.mesh
-//               mpirun -np 4 ex11p -m ../data/fichera-mixed.mesh
-//               mpirun -np 4 ex11p -m ../data/periodic-annulus-sector.msh
-//               mpirun -np 4 ex11p -m ../data/periodic-torus-sector.msh -rs 1
-//               mpirun -np 4 ex11p -m ../data/toroid-wedge.mesh -o 2
-//               mpirun -np 4 ex11p -m ../data/square-disc-p2.vtk -o 2
-//               mpirun -np 4 ex11p -m ../data/square-disc-p3.mesh -o 3
-//               mpirun -np 4 ex11p -m ../data/square-disc-nurbs.mesh -o -1
-//               mpirun -np 4 ex11p -m ../data/disc-nurbs.mesh -o -1 -n 20
-//               mpirun -np 4 ex11p -m ../data/pipe-nurbs.mesh -o -1
-//               mpirun -np 4 ex11p -m ../data/ball-nurbs.mesh -o 2
-//               mpirun -np 4 ex11p -m ../data/star-surf.mesh
-//               mpirun -np 4 ex11p -m ../data/square-disc-surf.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-segment.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-quad.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-tri.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-hex.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-tet.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-wedge.mesh -s 83
-//               mpirun -np 4 ex11p -m ../data/amr-quad.mesh
-//               mpirun -np 4 ex11p -m ../data/amr-hex.mesh
-//               mpirun -np 4 ex11p -m ../data/mobius-strip.mesh -n 8
-//               mpirun -np 4 ex11p -m ../data/klein-bottle.mesh -n 10
-//
-// Description:  This example code demonstrates the use of MFEM to solve the
-//               eigenvalue problem -Delta u = lambda u with homogeneous
-//               Dirichlet boundary conditions.
-//
-//               We compute a number of the lowest eigenmodes by discretizing
-//               the Laplacian and Mass operators using a FE space of the
-//               specified order, or an isoparametric/isogeometric space if
-//               order < 1 (quadratic for quadratic curvilinear mesh, NURBS for
-//               NURBS mesh, etc.)
-//
-//               The example highlights the use of the LOBPCG eigenvalue solver
-//               together with the BoomerAMG preconditioner in HYPRE, as well as
-//               optionally the SuperLU or STRUMPACK parallel direct solvers.
-//               Reusing a single GLVis visualization window for multiple
-//               eigenfunctions is also illustrated.
-//
-//               We recommend viewing Example 1 before viewing this example.
+/* 
+This solver solves the neutron diffusion equation in a full length fuel rod.
+The fuel rod is a cylinder with radius 0.74 cm and height 140 cm.
+Clad and coolant are not included in this model.
+*/
+
+// * This is a modified version of the example 11p code from MFEM
+
+/* Description:  Here in this solver we are trying to solve the generalized
+               eigenvalue problem -Delta u = B * lambda u with homogeneous
+               Dirichlet boundary conditions.
+
+               We only calculate the first eigenvalue and eigenvector.
+*/
+
+/** 
+* The neutron diffusion equation is given by:
+* * -D Delta phi + (Sigma_a - nu Sigma_f) phi = 0
+* where:
+* * D is the diffusion coefficient
+* * Sigma_a is the absorption cross section
+* * Sigma_f is the fission cross section
+* * nu is the number of neutrons produced per fission
+* * phi is the neutron flux
+
+* The neutron diffusion equation can be modified to:
+* * Delta phi - lambda B phi = 0
+* where:
+* * lambda = c2/k - c1 => k = c2/(lambda + c1)
+* * B = rho^2 [rho is normalized fuel density: rho = rho_fuel/rho_nominal]
+* * c1 = (3 Sigma_a Sigma_t^2) / sigma_s
+* * c2 = (3 nu Sigma_f Sigma_t^2) / sigma_s
+*/
 
 #include "mfem.hpp"
 #include <fstream>
@@ -67,15 +51,37 @@ int main(int argc, char *argv[])
    int myid = Mpi::WorldRank();
    Hypre::Init();
 
+
+   //*  Neutronic parameter and calculations
+   /** 
+   * This parameters are for nominal fuel density
+   * @param D Diffusion coefficient
+   * @param nu_sigma_f Fission cross section
+   * @param sigma_t Total cross section
+   * @param sigma_s Scattering cross section
+   * @param rho Fuel density (nominal)
+   */
+
+   double D = 1.3;
+   double sigma_a = 0.01;
+   double nu_sigma_f = 0.008;
+   double sigma_t = 0.01;
+   double sigma_s = 0.009;
+   double rho = 11880;
+
+   double c1 = (3 * sigma_t * sigma_t * sigma_a) / sigma_s;
+   double c2 = (3 * nu_sigma_f * sigma_t * sigma_t) / sigma_s;
+
+
    // 2. Parse command-line options.
 
    // * We won't this defauld mesh file
-   // ! const char *mesh_file = "../data/star.mesh";
+   const char *mesh_file = "../mesh/cylfuelcell3d_full_length.msh";
 
    int ser_ref_levels = 0;
    int par_ref_levels = 0;
    int order = 1;
-   int nev = 5;
+   int nev = 1;
    int seed = 75;
    bool slu_solver  = false;
    bool sp_solver = false;
@@ -84,6 +90,9 @@ int main(int argc, char *argv[])
    bool paraview = true;
 
    OptionsParser args(argc, argv);
+   
+   // * Check if mesh_file is defined (given in command line)
+   // * If not, print the usage and exit
    args.AddOption(&mesh_file, "-m", "--mesh",
                   "Mesh file to use.");
    args.AddOption(&ser_ref_levels, "-rs", "--refine-serial",
@@ -97,24 +106,6 @@ int main(int argc, char *argv[])
                   "Number of desired eigenmodes.");
    args.AddOption(&seed, "-s", "--seed",
                   "Random seed used to initialize LOBPCG.");
-
-   // * Check if mesh_file is defined (given in command line)
-   // * If not, print the usage and exit
-//   #ifdef mesh_file
-//      // * Do nothing
-//   #else
-//      std::cout << "Please provide a mesh file" << std::endl;
-//   #endif
-   if (!mesh_file)
-   {
-      if (myid == 0)
-      {
-         cout << "Please provide a mesh file: no default mesh allowed.ssh " << std::endl;
-         args.PrintUsage(cout);
-      }
-      return 1;
-   }
-
 
 
 #ifdef MFEM_USE_SUPERLU
@@ -215,8 +206,9 @@ int main(int argc, char *argv[])
    //    shift the Dirichlet eigenvalues out of the computational range. After
    //    serial and parallel assembly we extract the corresponding parallel
    //    matrices A and M.
+   ConstantCoefficient bsqrd(1.0);
    ConstantCoefficient one(1.0);
-   FunctionCoefficient ff(myF);
+   // ! FunctionCoefficient ff(myF);
 
 
    Array<int> ess_bdr;
@@ -239,7 +231,7 @@ int main(int argc, char *argv[])
    a->Finalize();
 
    ParBilinearForm *m = new ParBilinearForm(fespace);
-   m->AddDomainIntegrator(new MassIntegrator(ff));
+   m->AddDomainIntegrator(new MassIntegrator(bsqrd));
    m->Assemble();
    // shift the eigenvalue corresponding to eliminated dofs to a large value
    m->EliminateEssentialBCDiag(ess_bdr, numeric_limits<double>::min());
@@ -320,7 +312,7 @@ int main(int argc, char *argv[])
    lobpcg->SetNumModes(nev);
    lobpcg->SetRandomSeed(seed);
    lobpcg->SetPreconditioner(*precond);
-   lobpcg->SetMaxIter(200);
+   lobpcg->SetMaxIter(1000);
    lobpcg->SetTol(1e-8);
    lobpcg->SetPrecondUsageMode(1);
    lobpcg->SetPrintLevel(1);
@@ -335,6 +327,16 @@ int main(int argc, char *argv[])
    lobpcg->GetEigenvalues(eigenvalues);
    ParGridFunction x(fespace);
 
+   // TODO : Calculate k_eff using the eigenvalue
+   double lambda = eigenvalues[0];
+   double k_eff = c2/(lambda + c1);
+   // Print the k_eff
+   if (myid == 0)
+   {
+      cout << "Eigenvalue/ Multiplication factor K_eff = " << k_eff << "." << endl;
+   }
+
+
    // 10. Save the refined mesh and the modes in parallel. This output can be
    //     viewed later using GLVis: "glvis -np <np> -m mesh -g mode".
    {
@@ -345,6 +347,7 @@ int main(int argc, char *argv[])
       mesh_ofs.precision(8);
       pmesh->Print(mesh_ofs);
 
+      // * only need the first eigenmode
       for (int i=0; i<nev; i++)
       {
          // convert eigenvector from HypreParVector to ParGridFunction
@@ -404,7 +407,7 @@ int main(int argc, char *argv[])
    if (paraview)
    {
       x = lobpcg->GetEigenvector(0);
-      ParaViewDataCollection paraview_dc("mySol", pmesh);
+      ParaViewDataCollection paraview_dc("fluxSol", pmesh);
       paraview_dc.SetPrefixPath("ParaView");
       paraview_dc.SetLevelsOfDetail(order);
       paraview_dc.SetDataFormat(VTKFormat::BINARY);
@@ -414,7 +417,7 @@ int main(int argc, char *argv[])
       paraview_dc.RegisterField("flux", &x);
 
       ParGridFunction density(fespace);
-      density.ProjectCoefficient(ff);
+      density.ProjectCoefficient(bsqrd);
       paraview_dc.RegisterField("density", &density);
       
       paraview_dc.Save();
@@ -443,7 +446,6 @@ int main(int argc, char *argv[])
 
 double myF(const Vector & x)
 {
-   double r = sqrt(x(0)*x(0) + x(1)*x(1));
-   // return 1 if r > 0.5, 2 otherwise
-   return 1.0 + (r <= 0.5);
+   // linear function with respect to x(2). 1 at 0 and 2 at 140
+   return 1.0 + 1.0/140.0 * x(2);
 }
