@@ -12,6 +12,7 @@
 <PPointData>
 <PDataArray type="Float64" Name="density" NumberOfComponents="1" format="binary" />
 <PDataArray type="Float64" Name="flux" NumberOfComponents="1" format="binary" />
+<PDataArray type="Float64" Name="power" NumberOfComponents="1" format="binary" />
 </PPointData>
 <PCellData>
 	<PDataArray type="Int32" Name="attribute" NumberOfComponents="1" format="binary"/>

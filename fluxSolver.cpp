@@ -41,7 +41,6 @@ Clad and coolant are not included in this model.
 using namespace std;
 using namespace mfem;
 
-double myF(const Vector & x);
 
 int main(int argc, char *argv[])
 {
@@ -61,12 +60,20 @@ int main(int argc, char *argv[])
    * @param sigma_s Scattering cross section
    * @param rho Fuel density (nominal)
    */
+   /**
+    * ! The one group constants are found to be:
+  	Name	      Mean	   SD
+   Total	      0.257243	0.000042
+   Absorption	0.013829	0.000002
+   Scattering	0.243414	0.000040
+   nuFission	0.034901	0.000007
+   */
 
-   double D = 1.3;
-   double sigma_a = 0.01;
-   double nu_sigma_f = 0.008;
-   double sigma_t = 0.01;
-   double sigma_s = 0.009;
+   //double D = 1.3;
+   double sigma_a = 0.013829;
+   double nu_sigma_f = 0.034901;
+   double sigma_t = 0.257243;
+   double sigma_s = 0.243414;
    double rho = 11880;
 
    double c1 = (3 * sigma_t * sigma_t * sigma_a) / sigma_s;
@@ -75,7 +82,7 @@ int main(int argc, char *argv[])
 
    // 2. Parse command-line options.
 
-   // * We won't this defauld mesh file
+   // * We will use this defauld mesh file
    const char *mesh_file = "../mesh/cylfuelcell3d_full_length.msh";
 
    int ser_ref_levels = 0;
@@ -86,13 +93,12 @@ int main(int argc, char *argv[])
    bool slu_solver  = false;
    bool sp_solver = false;
    bool cpardiso_solver = false;
-   bool visualization = 1;
+   bool visualization = 0;
    bool paraview = true;
 
    OptionsParser args(argc, argv);
    
-   // * Check if mesh_file is defined (given in command line)
-   // * If not, print the usage and exit
+   // TODO: check for if mesh file is given
    args.AddOption(&mesh_file, "-m", "--mesh",
                   "Mesh file to use.");
    args.AddOption(&ser_ref_levels, "-rs", "--refine-serial",
@@ -206,7 +212,6 @@ int main(int argc, char *argv[])
    //    shift the Dirichlet eigenvalues out of the computational range. After
    //    serial and parallel assembly we extract the corresponding parallel
    //    matrices A and M.
-   ConstantCoefficient bsqrd(1.0);
    ConstantCoefficient one(1.0);
    // ! FunctionCoefficient ff(myF);
 
@@ -215,7 +220,7 @@ int main(int argc, char *argv[])
    if (pmesh->bdr_attributes.Size())
    {
       ess_bdr.SetSize(pmesh->bdr_attributes.Max());
-      ess_bdr = 1;
+      ess_bdr = 2; // boundary condition for the fuel rod
    }
 
    ParBilinearForm *a = new ParBilinearForm(fespace);
@@ -230,8 +235,28 @@ int main(int argc, char *argv[])
    a->EliminateEssentialBCDiag(ess_bdr, 1.0);
    a->Finalize();
 
+
+   // * Bilinear form for the mass matrix
+   // we need density for the mass matrix
+   // this grid function will come from the temperature solver
+   // here we will normalize the density to the nominal density and square it to get the B matrix
+   ParGridFunction density(fespace);
+   // this will be replaced when we get the density from the temperature solver
+   ConstantCoefficient rho_coeff(rho); // rho is the nominal density
+   density.ProjectCoefficient(rho_coeff);
+
+   // * Normalize the density
+   density /= rho;
+
+   // * Square the density to get the B matrix
+   // density will be needed later, so use a copy
+   ParGridFunction bsqrd(density);
+   bsqrd *= density; // this is the B matrix; here it is squared
+   // coefficient for the mass matrix
+   GridFunctionCoefficient bsqrd_coeff(&bsqrd);
+
    ParBilinearForm *m = new ParBilinearForm(fespace);
-   m->AddDomainIntegrator(new MassIntegrator(bsqrd));
+   m->AddDomainIntegrator(new MassIntegrator(bsqrd_coeff));
    m->Assemble();
    // shift the eigenvalue corresponding to eliminated dofs to a large value
    m->EliminateEssentialBCDiag(ess_bdr, numeric_limits<double>::min());
@@ -336,6 +361,23 @@ int main(int argc, char *argv[])
       cout << "Eigenvalue/ Multiplication factor K_eff = " << k_eff << "." << endl;
    }
 
+   /***
+    * TODO : Calculate the power distribution
+    * * power = (nu_sigma_f/2.4) * phi) * 200 MeV * 1.602e-13 J/MeV * 1e-6 MW/J
+    * here phi is the neutron flux and 2.4 is the average nu
+    */ 
+   ParGridFunction power(fespace);
+   ParGridFunction phi(fespace);
+   
+   // get phi from the first eigenmode
+   phi = lobpcg->GetEigenvector(0);
+
+   // get all the grid coefficients
+   double all_coeffs_of_power = (nu_sigma_f/2.4) * 200 * 1.602e-13 * 1e-6;
+
+   // project the power coefficient to the power grid function
+   power = phi;
+   power *= all_coeffs_of_power;
 
    // 10. Save the refined mesh and the modes in parallel. This output can be
    //     viewed later using GLVis: "glvis -np <np> -m mesh -g mode".
@@ -406,7 +448,7 @@ int main(int argc, char *argv[])
    // 12. Save data in the ParaView format.
    if (paraview)
    {
-      x = lobpcg->GetEigenvector(0);
+      //x = lobpcg->GetEigenvector(0);
       ParaViewDataCollection paraview_dc("fluxSol", pmesh);
       paraview_dc.SetPrefixPath("ParaView");
       paraview_dc.SetLevelsOfDetail(order);
@@ -414,12 +456,9 @@ int main(int argc, char *argv[])
       paraview_dc.SetHighOrderOutput(true);
       paraview_dc.SetCycle(0);
       paraview_dc.SetTime(0.0);
-      paraview_dc.RegisterField("flux", &x);
-
-      ParGridFunction density(fespace);
-      density.ProjectCoefficient(bsqrd);
+      paraview_dc.RegisterField("flux", &phi);
       paraview_dc.RegisterField("density", &density);
-      
+      paraview_dc.RegisterField("power", &power);
       paraview_dc.Save();
    }
 
@@ -442,10 +481,4 @@ int main(int argc, char *argv[])
    delete pmesh;
 
    return 0;
-}
-
-double myF(const Vector & x)
-{
-   // linear function with respect to x(2). 1 at 0 and 2 at 140
-   return 1.0 + 1.0/140.0 * x(2);
 }
