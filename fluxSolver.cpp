@@ -35,11 +35,35 @@ Clad and coolant are not included in this model.
 #include "mfem.hpp"
 #include <fstream>
 #include <iostream>
+#include <vector>
+#include <sstream>
+#include "mfem_field_adapter.h"
 
 //# define RAND_MAX 100
 
 using namespace std;
 using namespace mfem;
+
+std::vector<long int> getGids(const ParMesh& pmesh, const ParFiniteElementSpace& fes )
+{
+	auto * R = fes.GetRestrictionMatrix();
+	if(!R) {
+          std::cerr<<"R matrix is nullptr\n";
+          std::abort();
+	}
+	Array<HYPRE_BigInt> gids;
+	pmesh.GetGlobalVertexIndices(gids);
+	int size = gids.Size();
+        mfem::Vector gid_vector(size);
+        for(int i=0; i<size; ++i) {
+          gid_vector[i] = gids[i];
+        }
+	mfem::Vector tgids(fes.GetTrueVSize());
+	//R->BooleanMult(gids, tgids);
+	R->Mult(gid_vector, tgids);
+	//auto gids_host = gids.HostRead();
+	return {tgids.begin(), tgids.end()};
+}
 
 
 int main(int argc, char *argv[])
@@ -61,7 +85,7 @@ int main(int argc, char *argv[])
    * @param rho Fuel density (nominal)
    */
    /**
-    * ! The one group constants are found to be:
+    * ! The one group constants are found to be(using OpenMC):
   	Name	      Mean	   SD
    Total	      0.257243	0.000042
    Absorption	0.013829	0.000002
@@ -83,7 +107,9 @@ int main(int argc, char *argv[])
    // 2. Parse command-line options.
 
    // * We will use this defauld mesh file
-   const char *mesh_file = "../mesh/cylfuelcell3d_full_length.msh";
+   //const char *mesh_file = "../mesh/cylfuelcell3d_full_length.msh";
+
+   const char *mesh_file = "../mesh/testmesh.msh";
 
    int ser_ref_levels = 0;
    int par_ref_levels = 0;
@@ -204,6 +230,19 @@ int main(int argc, char *argv[])
       cout << "Number of unknowns: " << size << endl;
    }
 
+
+   
+   // Call the getGid function and print
+   auto gids = getGids(*pmesh, *fespace);
+   std::stringstream ss;
+   ss << myid<<": ";
+   for (auto id : gids)
+   {
+           ss << id << " ";
+   }
+   ss<<"\n";
+   std::cout<<ss.str();
+
    // 7. Set up the parallel bilinear forms a(.,.) and m(.,.) on the finite
    //    element space. The first corresponds to the Laplacian operator -Delta,
    //    while the second is a simple mass matrix needed on the right hand side
@@ -220,7 +259,7 @@ int main(int argc, char *argv[])
    if (pmesh->bdr_attributes.Size())
    {
       ess_bdr.SetSize(pmesh->bdr_attributes.Max());
-      ess_bdr = 2; // boundary condition for the fuel rod
+      ess_bdr = 1; // boundary condition for the fuel rod
    }
 
    ParBilinearForm *a = new ParBilinearForm(fespace);
@@ -378,6 +417,7 @@ int main(int argc, char *argv[])
    // project the power coefficient to the power grid function
    power = phi;
    power *= all_coeffs_of_power;
+   power *= phi;
 
    // 10. Save the refined mesh and the modes in parallel. This output can be
    //     viewed later using GLVis: "glvis -np <np> -m mesh -g mode".
@@ -482,3 +522,6 @@ int main(int argc, char *argv[])
 
    return 0;
 }
+
+
+

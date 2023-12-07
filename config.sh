@@ -4,5 +4,6 @@ cmake -S . -B build \
 	-DCMAKE_C_COMPILER=`which mpicc` \
 	-DMFEM_ROOT=/lore/hasanm4/mFEM/install/mfem/ \
 	-Dpcms_ROOT=/lore/hasanm4/pcms-coupler/build/PASCAL61/pcms/install \
-	-Dperfstubs_DIR=/lore/mersoj/laces-software/build/perfstubs/install/lib64/cmake/
+	-Dperfstubs_DIR=/lore/mersoj/laces-software/build/perfstubs/install/lib64/cmake/ \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo
 #	-Dperfstubs_ROOT=/lore/mersoj/laces-software/build/perfstubs/install

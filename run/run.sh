@@ -11,4 +11,5 @@ make -j 8
 # run the project
 cd ../run
 
+#totalview mpirun -a -np 4 ../build/fluxSolver
 mpirun -np 4 ../build/fluxSolver
