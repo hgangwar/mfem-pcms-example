@@ -1,0 +1,10 @@
+# igonore all the latex auxiliary files
+*.aux
+*.log
+*.out
+*.fdb_latexmk
+*.fls
+*.bbl
+*.bcf
+*.xml
+*.gz
