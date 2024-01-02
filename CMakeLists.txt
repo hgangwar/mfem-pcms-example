@@ -6,5 +6,13 @@ find_package(pcms REQUIRED)
 add_executable(fluxSolver fluxSolver.cpp)
 target_link_libraries(fluxSolver PUBLIC mfem pcms::pcms)
 
-add_executable(unit_test test_mfem_adapter-thefinal.cpp)
+add_executable(thermalSolver thermalSolver.cpp)
+target_link_libraries(thermalSolver PUBLIC mfem pcms::pcms)
+
+add_executable(coupler mfem_pcms_coupling.cpp mfem_field_adapter.h)
+target_link_libraries(coupler PUBLIC mfem pcms::pcms)
+
+
+add_executable(unit_test test_mfem_adapter.cpp)
 target_link_libraries(unit_test PUBLIC mfem pcms::pcms)
+

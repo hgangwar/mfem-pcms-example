@@ -1,33 +1,3 @@
-//                       MFEM Example 11 - Parallel Version
-//
-// Compile with: make ex11p
-//
-// Sample runs:  mpirun -np 4 ex11p -m ../data/square-disc.mesh
-//               mpirun -np 4 ex11p -m ../data/star.mesh
-//               mpirun -np 4 ex11p -m ../data/star-mixed.mesh
-//               mpirun -np 4 ex11p -m ../data/escher.mesh
-//               mpirun -np 4 ex11p -m ../data/fichera.mesh
-//               mpirun -np 4 ex11p -m ../data/fichera-mixed.mesh
-//               mpirun -np 4 ex11p -m ../data/periodic-annulus-sector.msh
-//               mpirun -np 4 ex11p -m ../data/periodic-torus-sector.msh -rs 1
-//               mpirun -np 4 ex11p -m ../data/toroid-wedge.mesh -o 2
-//               mpirun -np 4 ex11p -m ../data/square-disc-p2.vtk -o 2
-//               mpirun -np 4 ex11p -m ../data/square-disc-p3.mesh -o 3
-//               mpirun -np 4 ex11p -m ../data/square-disc-nurbs.mesh -o -1
-//               mpirun -np 4 ex11p -m ../data/disc-nurbs.mesh -o -1 -n 20
-//               mpirun -np 4 ex11p -m ../data/pipe-nurbs.mesh -o -1
-//               mpirun -np 4 ex11p -m ../data/ball-nurbs.mesh -o 2
-//               mpirun -np 4 ex11p -m ../data/star-surf.mesh
-//               mpirun -np 4 ex11p -m ../data/square-disc-surf.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-segment.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-quad.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-tri.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-hex.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-tet.mesh
-//               mpirun -np 4 ex11p -m ../data/inline-wedge.mesh -s 83
-//               mpirun -np 4 ex11p -m ../data/amr-quad.mesh
-//               mpirun -np 4 ex11p -m ../data/amr-hex.mesh
-//               mpirun -np 4 ex11p -m ../data/mobius-strip.mesh -n 8
 //               mpirun -np 4 ex11p -m ../data/klein-bottle.mesh -n 10
 //
 // Description:  This example code demonstrates the use of MFEM to solve the
@@ -51,7 +21,11 @@
 #include "mfem.hpp"
 #include <fstream>
 #include <iostream>
+#include "pcms/pcms.h"
+#include "mfem_field_adapter.h"
 
+using pcms::CouplerClient;
+using pcms::MFEMFieldAdapter;
 //# define RAND_MAX 100
 
 using namespace std;
@@ -67,8 +41,10 @@ int main(int argc, char *argv[])
    int myid = Mpi::WorldRank();
    Hypre::Init();
 
+   
+
    // 2. Parse command-line options.
-   const char *mesh_file = "../data/star.mesh";
+   const char *mesh_file = "../mesh/cylfuelcell3d_full_length.msh";
    int ser_ref_levels = 2;
    int par_ref_levels = 1;
    int order = 1;
@@ -336,6 +312,14 @@ int main(int argc, char *argv[])
          mode_name.str("");
       }
    }
+
+   // send x to the coupler
+   // send data using the coupler
+   CouplerClient cpl("thermalClient", MPI_COMM_WORLD);
+   cpl.AddField("temp", MFEMFieldAdapter(std::string("th2flux"), *pmesh, *fespace, x));
+   cpl.BeginSendPhase();
+   cpl.SendField("temp");
+   cpl.EndSendPhase();
 
    // 11. Send the solution by socket to a GLVis server.
    if (visualization)

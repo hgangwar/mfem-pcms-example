@@ -27,10 +27,6 @@ static constexpr bool done = true;
 static constexpr int COMM_ROUNDS = 4;
 namespace ts = test_support;
 
-/**
- * ! This part is not needed for this coupling.
-
-
 void xgc_delta_f(MPI_Comm comm, Omega_h::Mesh& mesh)
 {
   CouplerClient cpl("proxy_couple_xgc_delta_f", comm);
@@ -70,9 +66,7 @@ void xgc_total_f(MPI_Comm comm, Omega_h::Mesh& mesh)
     }
   } while (!done);
 }
-*/
-
-void mfemCoupler(MPI_Comm comm, Omega_h::Mesh& mesh, std::string_view cpn_file)
+void xgc_coupler(MPI_Comm comm, Omega_h::Mesh& mesh, std::string_view cpn_file)
 {
   // coupling server using same mesh as application
   // note the xgc_coupler stores a reference to the internal mesh and it is the

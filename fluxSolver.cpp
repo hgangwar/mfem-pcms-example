@@ -31,19 +31,22 @@ Clad and coolant are not included in this model.
 * * c1 = (3 Sigma_a Sigma_t^2) / sigma_s
 * * c2 = (3 nu Sigma_f Sigma_t^2) / sigma_s
 */
-
 #include "mfem.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>
 #include <sstream>
+#include "pcms/pcms.h"
 #include "mfem_field_adapter.h"
 
+using pcms::CouplerClient;
+using pcms::MFEMFieldAdapter;
 //# define RAND_MAX 100
 
 using namespace std;
 using namespace mfem;
 
+/* ! it's implemented in the mfem adaptedkKDKDkddkr
 std::vector<long int> getGids(const ParMesh& pmesh, const ParFiniteElementSpace& fes )
 {
 	auto * R = fes.GetRestrictionMatrix();
@@ -64,6 +67,7 @@ std::vector<long int> getGids(const ParMesh& pmesh, const ParFiniteElementSpace&
 	//auto gids_host = gids.HostRead();
 	return {tgids.begin(), tgids.end()};
 }
+*/
 
 
 int main(int argc, char *argv[])
@@ -107,9 +111,9 @@ int main(int argc, char *argv[])
    // 2. Parse command-line options.
 
    // * We will use this defauld mesh file
-   //const char *mesh_file = "../mesh/cylfuelcell3d_full_length.msh";
+   const char *mesh_file = "../mesh/cylfuelcell3d_full_length.msh";
 
-   const char *mesh_file = "../mesh/testmesh.msh";
+   //const char *mesh_file = "../mesh/testmesh.msh";
 
    int ser_ref_levels = 0;
    int par_ref_levels = 0;
@@ -231,7 +235,18 @@ int main(int argc, char *argv[])
    }
 
 
-   
+   // receive density from the thermal solver
+   ParGridFunction dent(fespace);
+   CouplerClient cpl("fluxClient", MPI_COMM_WORLD);
+   // ? No addfield needed? how it's gonna know where to save the data?
+   cpl.AddField("density", MFEMFieldAdapter(std::string("flux2th"), *pmesh, *fespace, dent));
+
+   cpl.BeginReceivePhase();
+   cpl.ReceiveField("temp");
+   cpl.EndReceivePhase();
+
+
+  /* 
    // Call the getGid function and print
    auto gids = getGids(*pmesh, *fespace);
    std::stringstream ss;
@@ -242,6 +257,7 @@ int main(int argc, char *argv[])
    }
    ss<<"\n";
    std::cout<<ss.str();
+  */
 
    // 7. Set up the parallel bilinear forms a(.,.) and m(.,.) on the finite
    //    element space. The first corresponds to the Laplacian operator -Delta,
@@ -394,10 +410,13 @@ int main(int argc, char *argv[])
    // TODO : Calculate k_eff using the eigenvalue
    double lambda = eigenvalues[0];
    double k_eff = c2/(lambda + c1);
+   double D = sigma_s/(3*sigma_t*sigma_t);
+   double k_eff_2ndm = nu_sigma_f/(lambda*D + sigma_a);
    // Print the k_eff
    if (myid == 0)
    {
-      cout << "Eigenvalue/ Multiplication factor K_eff = " << k_eff << "." << endl;
+      cout << "Eigenvalue/ Multiplication factor K_eff = " << k_eff << "." << "\n";
+      cout << "K-eff using the 2nd method: " << k_eff_2ndm << "." << "\n";
    }
 
    /***

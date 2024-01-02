@@ -48,12 +48,9 @@ public:
    * @param name name of the field
    * @param gf_data the mfem grid function data
    */
-  MFEMFieldAdapter(std::string name, /*MPI_Comm plane_communicator,*/
-                  /*ScalarArrayView<T, memory_space> data,*/
-                  mfem::ParMesh& pmesh, // to get the mesh and the fespace
+  MFEMFieldAdapter(std::string name, 
+                  mfem::ParMesh& pmesh, 
                   mfem::ParFiniteElementSpace& pfes,
-                  // the transfered data: this gf_data represents
-                  // all the each field data
                   mfem::ParGridFunction& gf_data)
     : name_(std::move(name)),
       pmesh_(pmesh),
