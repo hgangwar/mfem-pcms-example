@@ -45,8 +45,8 @@ int main(int argc, char *argv[])
 
    // 2. Parse command-line options.
    const char *mesh_file = "../mesh/cylfuelcell3d_full_length.msh";
-   int ser_ref_levels = 2;
-   int par_ref_levels = 1;
+   int ser_ref_levels = 0;
+   int par_ref_levels = 0;
    int order = 1;
    int nev = 5;
    int seed = 75;
@@ -316,9 +316,9 @@ int main(int argc, char *argv[])
    // send x to the coupler
    // send data using the coupler
    CouplerClient cpl("thermalClient", MPI_COMM_WORLD);
-   cpl.AddField("temp", MFEMFieldAdapter(std::string("th2flux"), *pmesh, *fespace, x));
+   cpl.AddField("density", MFEMFieldAdapter(std::string("thermal_density"), *pmesh, *fespace, x));
    cpl.BeginSendPhase();
-   cpl.SendField("temp");
+   cpl.SendField("density");
    cpl.EndSendPhase();
 
    // 11. Send the solution by socket to a GLVis server.

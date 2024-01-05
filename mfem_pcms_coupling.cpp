@@ -3,7 +3,7 @@
 #include <pcms/pcms.h>
 #include <pcms/types.h>
 //#include <redev_variant_tools.h>
-#include "test_support.h"
+//#include "test_support.h"
 //#include <chrono>
 //#include <thread>
 #include "mfem_field_adapter.h"
@@ -30,7 +30,7 @@ using pcms::OmegaHFieldAdapter;
 
 //static constexpr bool done = true;
 //static constexpr int COMM_ROUNDS = 4;
-namespace ts = test_support;
+//namespace ts = test_support;
 
 // This is the coupler of interest
 void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
@@ -45,36 +45,32 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
 
   pcms::CouplerServer cpl("mfem_couple_server", comm, partition, mesh); 
 
-  auto* flux = cpl.AddApplication("fluxClient");
-  auto* thermal = cpl.AddApplication("thermalClient");
+  auto* flux_app = cpl.AddApplication("fluxClient");
+  auto* thermal_app = cpl.AddApplication("thermalClient");
 
-
+  // is_overlap is a vector of size mesh.nents(0) and is initialized to 1
   Omega_h::Write<Omega_h::I8> is_overlap(mesh.nents(0));
   Omega_h::parallel_for(is_overlap.size(), OMEGA_H_LAMBDA(int i)
   {
     is_overlap[i] = 1;
   });
 
-  //auto msizewithof = sizeof(mesh);
-  //std::cout << "\nSize of the mesh using sizeof: "<< msizewithof << "\n";
 
-  
- 
-
-  auto* flux_density = flux->AddField(
+  auto* flux_density_field = flux_app->AddField(
     "density", OmegaHFieldAdapter<GO>("flux_density", mesh, is_overlap),
     FieldTransferMethod::Copy, // to Omega_h
     FieldEvaluationMethod::None,
     FieldTransferMethod::Copy, // from Omega_h
     FieldEvaluationMethod::None, is_overlap);
-  auto* thermal_density = thermal->AddField(
+  auto* thermal_density_field = thermal_app->AddField(
     "density", OmegaHFieldAdapter<GO>("thermal_density", mesh, is_overlap),
     FieldTransferMethod::Copy, FieldEvaluationMethod::None,
     FieldTransferMethod::Copy, FieldEvaluationMethod::None, is_overlap);
   
   // why it is done twice in the proxy_coupling?
-  flux->ReceivePhase([&]() { flux_density->Receive(); });
-  thermal->SendPhase([&]() { thermal_density->Send(pcms::Mode::Deferred); });
+  flux_app->ReceivePhase([&]() { flux_density_field->Receive(); });
+  //thermal_app->SendPhase([&]() { thermal_density_field->Send(pcms::Mode::Deferred); });
+  thermal_app->SendPhase([&]() { thermal_density_field->Send(); });
 
   Omega_h::vtk::write_parallel("mfem_couple", &mesh, mesh.dim());
 
@@ -91,9 +87,10 @@ int main(int argc, char** argv)
   const auto world = lib.world();
   //create a distributed mesh object, calls mesh.balance() and then returns it
   auto mesh = Omega_h::gmsh::read("../mesh/cylfuelcell3d_full_length.msh", world);
+  MPI_Comm comm = world->get_impl();
 
 
-  mfem_coupler(MPI_COMM_WORLD, mesh);
+  mfem_coupler(comm, mesh);
   std::cout << "here the main program is running \n";
   return 0;
 }

@@ -1,6 +1,10 @@
 #! /bin/bash
 # delete if Run directory already exists
-if [-d Run]; then rm -r Run; fi
+if [ -d "Run" ]; then
+  rm -rf Run
+fi
+
+
 mkdir Run
 cd Run
 

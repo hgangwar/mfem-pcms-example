@@ -238,11 +238,9 @@ int main(int argc, char *argv[])
    // receive density from the thermal solver
    ParGridFunction dent(fespace);
    CouplerClient cpl("fluxClient", MPI_COMM_WORLD);
-   // ? No addfield needed? how it's gonna know where to save the data?
-   cpl.AddField("density", MFEMFieldAdapter(std::string("flux2th"), *pmesh, *fespace, dent));
-
+   cpl.AddField("density", MFEMFieldAdapter(std::string("flux_density"), *pmesh, *fespace, dent));
    cpl.BeginReceivePhase();
-   cpl.ReceiveField("temp");
+   cpl.ReceiveField("density");
    cpl.EndReceivePhase();
 
 
