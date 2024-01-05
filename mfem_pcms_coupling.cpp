@@ -49,8 +49,8 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
   auto* thermal = cpl.AddApplication("thermalClient");
 
 
-  Omega_h::Write<Omega_h::I8> is_overlap(sizeof(mesh));
-  Omega_h::parallel_for(sizeof(mesh), OMEGA_H_LAMBDA(int i)
+  Omega_h::Write<Omega_h::I8> is_overlap(mesh.nents(0));
+  Omega_h::parallel_for(is_overlap.size(), OMEGA_H_LAMBDA(int i)
   {
     is_overlap[i] = 1;
   });
