@@ -54,7 +54,7 @@ int main(int argc, char *argv[])
    bool sp_solver = false;
    bool cpardiso_solver = false;
    bool visualization = 1;
-   bool paraview = true;
+   bool paraview = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&mesh_file, "-m", "--mesh",
@@ -273,8 +273,8 @@ int main(int argc, char *argv[])
    lobpcg->SetNumModes(nev);
    lobpcg->SetRandomSeed(seed);
    lobpcg->SetPreconditioner(*precond);
-   lobpcg->SetMaxIter(200);
-   lobpcg->SetTol(1e-8);
+   lobpcg->SetMaxIter(50);
+   lobpcg->SetTol(1e-6);
    lobpcg->SetPrecondUsageMode(1);
    lobpcg->SetPrintLevel(1);
    lobpcg->SetMassMatrix(*M);
@@ -315,11 +315,13 @@ int main(int argc, char *argv[])
 
    // send x to the coupler
    // send data using the coupler
+   std::cout << "thermalSolver: start sending data to the coupler. \n";
    CouplerClient cpl("thermalClient", MPI_COMM_WORLD);
    cpl.AddField("density", MFEMFieldAdapter(std::string("thermal_density"), *pmesh, *fespace, x));
    cpl.BeginSendPhase();
    cpl.SendField("density");
    cpl.EndSendPhase();
+   std::cout << "thermalSolver: end sending data to the coupler. \n";
 
    // 11. Send the solution by socket to a GLVis server.
    if (visualization)
@@ -345,11 +347,12 @@ int main(int argc, char *argv[])
                    << "window_title 'Eigenmode " << i+1 << '/' << nev
                    << ", Lambda = " << eigenvalues[i] << "'" << endl;
 
-         char c;
+         // press q to exit. this is done so that it continues to send data to the coupler
+         char c='q';
          if (myid == 0)
          {
-            cout << "press (q)uit or (c)ontinue --> " << flush;
-            cin >> c;
+            //cout << "press (q)uit or (c)ontinue --> " << flush;
+            //cin >> c;
          }
          MPI_Bcast(&c, 1, MPI_CHAR, 0, MPI_COMM_WORLD);
 

@@ -37,9 +37,11 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
 {
   // create partition to give it to the server coupler class constructor
   const int dim = 3; // 3D case
-  std::vector<pcms::LO> ranks(8); // does it need to match with # of ranks of comm
+  //std::vector<pcms::LO> ranks(8); // does it need to match with # of ranks of comm
+  std::vector<pcms::LO> ranks(1); // does it need to match with # of ranks of comm
   std::iota(ranks.begin(),ranks.end(),0);
-  std::vector<pcms::Real> cuts = {0,/*x*/0.5,/*y*/0.75,0.25,/*z*/0.1,0.4,0.8,0.3};
+  //std::vector<pcms::Real> cuts = {0,/*x*/0.5,/*y*/0.75,0.25,/*z*/0.1,0.4,0.8,0.3};
+  std::vector<pcms::Real> cuts = {0};
   auto partition = redev::Partition{redev::RCBPtn{dim, ranks, cuts}}; // ? partition constructor work here? How?
   auto& rcb_partition = std::get<redev::RCBPtn>(partition);
 
@@ -47,6 +49,8 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
 
   auto* flux_app = cpl.AddApplication("fluxClient");
   auto* thermal_app = cpl.AddApplication("thermalClient");
+  
+  std::cout << "coupler: coupler server and applications are created \n";
 
   // is_overlap is a vector of size mesh.nents(0) and is initialized to 1
   Omega_h::Write<Omega_h::I8> is_overlap(mesh.nents(0));
@@ -57,20 +61,29 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
 
 
   auto* flux_density_field = flux_app->AddField(
-    "density", OmegaHFieldAdapter<GO>("flux_density", mesh, is_overlap),
+    "density", OmegaHFieldAdapter<double>("flux_density", mesh, is_overlap),
     FieldTransferMethod::Copy, // to Omega_h
     FieldEvaluationMethod::None,
     FieldTransferMethod::Copy, // from Omega_h
     FieldEvaluationMethod::None, is_overlap);
+  //auto* thermal_density_field = thermal_app->AddField(
+  //  "density", OmegaHFieldAdapter<GO>("thermal_density", mesh, is_overlap),
+  //  FieldTransferMethod::Copy, FieldEvaluationMethod::None,
+  //  FieldTransferMethod::Copy, FieldEvaluationMethod::None, is_overlap);
   auto* thermal_density_field = thermal_app->AddField(
-    "density", OmegaHFieldAdapter<GO>("thermal_density", mesh, is_overlap),
+    "density", OmegaHFieldAdapter<double>("flux_density", mesh, is_overlap),
     FieldTransferMethod::Copy, FieldEvaluationMethod::None,
     FieldTransferMethod::Copy, FieldEvaluationMethod::None, is_overlap);
   
+  std::cout << "coupler: fields are created \n"; 
   // why it is done twice in the proxy_coupling?
-  flux_app->ReceivePhase([&]() { flux_density_field->Receive(); });
   //thermal_app->SendPhase([&]() { thermal_density_field->Send(pcms::Mode::Deferred); });
-  thermal_app->SendPhase([&]() { thermal_density_field->Send(); });
+
+  std::cout << "coupler: starting receive from thermalSolver\n";
+  thermal_app->ReceivePhase([&]() { thermal_density_field->Receive(); });
+  std::cout << "coupler: done receiving, starting send\n";
+  flux_app->SendPhase([&]() { flux_density_field->Send(); });
+  std::cout << "coupler: done sending to fluxSolver\n";
 
   Omega_h::vtk::write_parallel("mfem_couple", &mesh, mesh.dim());
 
@@ -80,15 +93,14 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
 // main just needs to call mfem_coupler function
 int main(int argc, char** argv)
 {
-  // read gmesh file using omegaH
-  // calls MPI_init(&argc, &argv) and Kokkos::initialize(argc, argv)
   auto lib = Omega_h::Library(&argc, &argv);
   // encapsulates many MPI functions, e.g., world.barrier()
   const auto world = lib.world();
   //create a distributed mesh object, calls mesh.balance() and then returns it
   auto mesh = Omega_h::gmsh::read("../mesh/cylfuelcell3d_full_length.msh", world);
   MPI_Comm comm = world->get_impl();
-
+  
+  std::cout << "coupler: mesh is read and coupler is ready to run\n";
 
   mfem_coupler(comm, mesh);
   std::cout << "here the main program is running \n";

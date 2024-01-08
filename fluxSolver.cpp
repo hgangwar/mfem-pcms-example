@@ -124,7 +124,7 @@ int main(int argc, char *argv[])
    bool sp_solver = false;
    bool cpardiso_solver = false;
    bool visualization = 0;
-   bool paraview = true;
+   bool paraview = false;
 
    OptionsParser args(argc, argv);
    
@@ -234,7 +234,7 @@ int main(int argc, char *argv[])
       cout << "Number of unknowns: " << size << endl;
    }
 
-
+   std::cout << "fluxSolver: Now to couple with the thermal solver\n";
    // receive density from the thermal solver
    ParGridFunction dent(fespace);
    CouplerClient cpl("fluxClient", MPI_COMM_WORLD);
@@ -242,6 +242,7 @@ int main(int argc, char *argv[])
    cpl.BeginReceivePhase();
    cpl.ReceiveField("density");
    cpl.EndReceivePhase();
+   std::cout << "Received density from the thermal solver\n";
 
 
   /* 
@@ -390,8 +391,8 @@ int main(int argc, char *argv[])
    lobpcg->SetNumModes(nev);
    lobpcg->SetRandomSeed(seed);
    lobpcg->SetPreconditioner(*precond);
-   lobpcg->SetMaxIter(1000);
-   lobpcg->SetTol(1e-8);
+   lobpcg->SetMaxIter(50);
+   lobpcg->SetTol(1e-4);
    lobpcg->SetPrecondUsageMode(1);
    lobpcg->SetPrintLevel(1);
    lobpcg->SetMassMatrix(*M);
@@ -486,11 +487,11 @@ int main(int argc, char *argv[])
                    << "window_title 'Eigenmode " << i+1 << '/' << nev
                    << ", Lambda = " << eigenvalues[i] << "'" << endl;
 
-         char c;
+         char c='q';
          if (myid == 0)
          {
-            cout << "press (q)uit or (c)ontinue --> " << flush;
-            cin >> c;
+            //cout << "press (q)uit or (c)ontinue --> " << flush;
+            //cin >> c;
          }
          MPI_Bcast(&c, 1, MPI_CHAR, 0, MPI_COMM_WORLD);
 
