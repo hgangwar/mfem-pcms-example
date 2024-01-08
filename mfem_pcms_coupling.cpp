@@ -2,10 +2,6 @@
 #include <vector>
 #include <pcms/pcms.h>
 #include <pcms/types.h>
-//#include <redev_variant_tools.h>
-//#include "test_support.h"
-//#include <chrono>
-//#include <thread>
 #include "mfem_field_adapter.h"
 #include "mfem.hpp"
 #include <mpi.h>

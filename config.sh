@@ -6,5 +6,6 @@ cmake -S . -B build \
 	-Dpcms_ROOT=/lore/hasanm4/pcms-coupler/build/PASCAL61/pcms/install \
 	-Dperfstubs_DIR=/lore/mersoj/laces-software/build/perfstubs/install/lib64/cmake/ \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DGmsh_ROOT=/lore/hasanm4/Gmsh/
+  -DGmsh_ROOT=/lore/hasanm4/Gmsh/ \
+  -DCatch2_ROOT=/lore/hasanm4/Catch2/ \
 #	-Dperfstubs_ROOT=/lore/mersoj/laces-software/build/perfstubs/install
