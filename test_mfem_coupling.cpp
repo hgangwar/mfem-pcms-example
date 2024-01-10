@@ -27,6 +27,7 @@
 #include <Omega_h_for.hpp>
 #include <redev_variant_tools.h>
 #include <pcms/omega_h_field.h>
+//#include <atomic>
 
 
 using pcms::Copy;
@@ -40,6 +41,13 @@ using pcms::make_array_view;
 using pcms::OmegaHFieldAdapter;
 using pcms::MFEMFieldAdapter;
 
+// this function checks if two doubles are close to each other
+// within a tolerance
+
+bool is_close(double a, double b, double tol = 1e-12)
+{
+  return std::abs(a - b) < tol;
+}
 
 void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
 {
@@ -121,7 +129,7 @@ int thermal_solver(const std::string& mesh_file_name, MPI_Comm comm)
 
   // create the grid function
   mfem::GridFunction gf(fespace); 
-  // fill it with 11.23 value using iota
+  // fill it with 1.23 value using iota
   std::iota(gf.begin(), gf.end(), 1.23);
   // make it a parallel grid function
   mfem::ParGridFunction pgf = mfem::ParGridFunction(fespace, gf);
@@ -166,7 +174,7 @@ int flux_solver(const std::string& mesh_file_name, MPI_Comm comm)
 
   // create the reference grid function
   mfem::GridFunction ref_gf(fespace); 
-  // fill it with 11.23 value using iota
+  // fill it with 1.23 value using iota
   std::iota(ref_gf.begin(), ref_gf.end(), 1.23);
 
   // this time we receive the data from the thermal solver
@@ -198,6 +206,25 @@ int flux_solver(const std::string& mesh_file_name, MPI_Comm comm)
     std::cout << "The size of the grid functions are the same\n";
   }
 
+  int flux_procs;
+  MPI_Comm_size(comm, &flux_procs);
+  int flux_myid;
+  MPI_Comm_rank(comm, &flux_myid);
+
+  if (flux_myid == 0)
+  {
+    for (int i = 0; i < gf.Size(); i++)
+    {
+      if (!is_close(gf[i], ref_gf[i]))
+      {
+        std::cout << "The data of the grid functions are not the same\n";
+        std::cout << "The test failed\n";
+        MPI_Abort(MPI_COMM_WORLD, 1);
+      }
+    }
+  }
+
+  
 
   // delete the mesh and fe space
   delete fespace;
