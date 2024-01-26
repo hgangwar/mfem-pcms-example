@@ -88,7 +88,9 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
 
 // main just needs to call mfem_coupler function
 int main(int argc, char** argv)
+
 {
+  std::cout << "The main function started \n";
   auto lib = Omega_h::Library(&argc, &argv);
   // encapsulates many MPI functions, e.g., world.barrier()
   const auto world = lib.world();

@@ -15,6 +15,7 @@
  * The test is now done for 3D meshes.
 */
 #include <iostream>
+#include <cmath>
 #include <mpi.h>
 //#include <catch2/catch_session.hpp>
 //#include <catch2/catch_test_macros.hpp>
@@ -27,8 +28,14 @@
 #include <Omega_h_for.hpp>
 #include <redev_variant_tools.h>
 #include <pcms/omega_h_field.h>
+#include <gmsh.h>
+#include <gmsh.h>
+#include "Omega_h_element.hpp"
+#include "Omega_h_shape.hpp"
+#include <sstream>
 //#include <atomic>
 
+//using namespace Omega_h;
 
 using pcms::Copy;
 using pcms::CouplerClient;
@@ -49,16 +56,78 @@ bool is_close(double a, double b, double tol = 1e-12)
   return std::abs(a - b) < tol;
 }
 
+/* @brief function to get number of ranks in a communicator object
+  * @param[in] comm: MPI communicator
+  * @return number of ranks in the communicator
+*/
+int get_comm_size(MPI_Comm comm)
+{
+  int comm_size;
+  MPI_Comm_size(comm, &comm_size);
+  return comm_size;
+}
+
+/* @brief function to create cut positions for number of ranks in 3D
+  * @param[in] num_ranks: number of ranks in the communicator
+  * @return vector of cut positions
+  * @details the cut positions works like this:
+  *         for only one rank, the cut position vector is {0}
+  *         for two ranks, the cut position vector is {0, 0.5}
+  *         for four ranks, the cut position vector is {0, 0.5, 0.75, 0.25}
+  *         for eight ranks, the cut position vector is {0, 0.5, 0.75, 0.25, 0.1, 0.4, 0.8, 0.3}
+  *         and so on
+  *        the cut positions are in the range of [0,1]
+*/
+std::vector<pcms::Real> get_cut_positions(int num_ranks)
+{
+  // this function only works for 3D meshes
+  // for now, it only works upto 8 ranks, so check the number of ranks
+  if (num_ranks > 8)
+  {
+    std::cout << "The number of ranks is more than 8\n";
+    std::cout << "The get_cut_position function only works for 8 ranks or less\n";
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+  // create a vector of cut positions of size num_ranks
+  std::vector<pcms::Real> cuts(num_ranks);
+  // fill the first cut position with 0
+  cuts[0] = 0;
+  
+  // fill the rest of the cut positions with 0.5
+  if (num_ranks > 1){
+    for (int i = 1; i < num_ranks; i++)
+    {
+      cuts[i] = 0.5;
+    }
+  }
+  return cuts;
+}
+
+
 void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
 {
   // create partition to give it to the server coupler class constructor
   const int dim = 3; // 3D case
   //std::vector<pcms::LO> ranks(8); // does it need to match with # of ranks of comm
-  std::vector<pcms::LO> ranks(1); // does it need to match with # of ranks of comm
+
+  int comm_size = get_comm_size(comm);
+  std::cout << "The number of ranks is: " << comm_size << "\n";
+  std::vector<pcms::LO> ranks(comm_size);
   std::iota(ranks.begin(),ranks.end(),0);
+
+  // check if the comm_size is power of 2
+  if ((comm_size & (comm_size - 1)) != 0)
+  {
+    std::cout << "The number of ranks supplied to the coupler is not power of 2\n";
+    std::cout << "In needs power of 2 since Omega_h follows tree partition scheme\n";
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+
   //std::vector<pcms::Real> cuts = {0,/*x*/0.5,/*y*/0.75,0.25,/*z*/0.1,0.4,0.8,0.3};
-  std::vector<pcms::Real> cuts = {0};
-  auto partition = redev::Partition{redev::RCBPtn{dim, ranks, cuts}}; // ? partition constructor work here? How?
+  //std::vector<pcms::Real> cuts = {0};
+  std::vector<pcms::Real> cuts = get_cut_positions(comm_size);
+
+  auto partition = redev::Partition{redev::RCBPtn{dim, ranks, cuts}};
   auto& rcb_partition = std::get<redev::RCBPtn>(partition);
 
   pcms::CouplerServer cpl("mfem_couple_server", comm, partition, mesh); 
@@ -82,28 +151,19 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
     FieldEvaluationMethod::None,
     FieldTransferMethod::Copy, // from Omega_h
     FieldEvaluationMethod::None, is_overlap);
-  //auto* thermal_density_field = thermal_app->AddField(
-  //  "density", OmegaHFieldAdapter<GO>("thermal_density", mesh, is_overlap),
-  //  FieldTransferMethod::Copy, FieldEvaluationMethod::None,
-  //  FieldTransferMethod::Copy, FieldEvaluationMethod::None, is_overlap);
+
   auto* thermal_density_field = thermal_app->AddField(
     "density", OmegaHFieldAdapter<double>("flux_density", mesh, is_overlap),
     FieldTransferMethod::Copy, FieldEvaluationMethod::None,
     FieldTransferMethod::Copy, FieldEvaluationMethod::None, is_overlap);
   
-  std::cout << "coupler: fields are created \n"; 
-  // why it is done twice in the proxy_coupling?
-  //thermal_app->SendPhase([&]() { thermal_density_field->Send(pcms::Mode::Deferred); });
+  std::cout << "coupler: fields are created \n";
 
   std::cout << "coupler: starting receive from thermalSolver\n";
   thermal_app->ReceivePhase([&]() { thermal_density_field->Receive(); });
   std::cout << "coupler: done receiving, starting send\n";
   flux_app->SendPhase([&]() { flux_density_field->Send(); });
   std::cout << "coupler: done sending to fluxSolver\n";
-
-  //Omega_h::vtk::write_parallel("mfem_couple", &mesh, mesh.dim());
-
-  //std::cout << "mfem coupler function working" << "\n";
 }
 
 // thermal solver function for dummy thermal solver
@@ -223,9 +283,6 @@ int flux_solver(const std::string& mesh_file_name, MPI_Comm comm)
       }
     }
   }
-
-  
-
   // delete the mesh and fe space
   delete fespace;
   delete fec;
@@ -251,11 +308,18 @@ int main(int argc, char *argv[])
   MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
   // if the world size is not 3 then return 1
-  if (world_size != 3)
-  {
-    std::cout << "World size must be 3 for " << argv[0] << std::endl;
-    MPI_Abort(MPI_COMM_WORLD, 1);
-  }
+  //if (world_size != 3)
+  //{
+  //  std::cout << "World size must be 3 for " << argv[0] << std::endl;
+  //  MPI_Abort(MPI_COMM_WORLD, 1);
+  //}
+
+  // number of ranks for each solver
+  int thermal_solver_ranks = 1;
+  int flux_solver_ranks = 1;
+  int coupler_server_ranks = world_size - thermal_solver_ranks - flux_solver_ranks;
+  // reduce the coupler server ranks to the nearest power of 2
+  coupler_server_ranks = std::pow(2, std::floor(std::log2(coupler_server_ranks)));
 
   // split the communicator based on the rank of each process
   //MPI_Comm comm;
@@ -264,26 +328,26 @@ int main(int argc, char *argv[])
 
 
   // mesh name
-  std::string mesh_file_name = "../mesh/cylfuelcell3d_full_length.msh";
-
-  // load the mesh using Omega_h
-  //auto lib = Omega_h::Library(&argc, &argv, comm);
-  //const auto world = lib.world();
-  //auto mesh = Omega_h::gmsh::read(mesh_file_name, world);
+  std::string mesh_file_name = "../mesh/parmesh/cylinder.msh";
   
   MPI_Comm server_comm, flux_comm, thermal_comm;
-  MPI_Comm comm = MPI_COMM_WORLD;
+  MPI_Comm comm;
+  MPI_Comm_dup(MPI_COMM_WORLD, &comm);
 
   // run the coupler server and the thermal and flux solvers with different communicators
-  if (world_rank == 0)
+  if (world_rank < thermal_solver_ranks)
   {
-    MPI_Comm_split(comm, 0, world_rank, &server_comm);
-    // load the mesh using Omega_h
-    auto lib = Omega_h::Library(&argc, &argv, server_comm);
-    const auto world = lib.world();
-    auto mesh = Omega_h::gmsh::read(mesh_file_name, world);
-    mfem_coupler(server_comm, mesh);
-  } else if (world_rank == 1)
+    MPI_Comm_split(comm, 0, world_rank, &thermal_comm);
+    int thermal_solver_return_flag = thermal_solver(mesh_file_name, thermal_comm);
+    if (thermal_solver_return_flag == 1)
+    {
+      std::cout << "The thermal solver failed\n";
+      // return 1 and abort the program
+      MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    MPI_Comm_free(&thermal_comm);
+  } else if ((world_rank >= thermal_solver_ranks) && 
+              (world_rank < thermal_solver_ranks + flux_solver_ranks))
   {
     MPI_Comm_split(comm, 1, world_rank, &flux_comm);
     int flux_solver_return_flag = flux_solver(mesh_file_name, flux_comm);
@@ -293,18 +357,39 @@ int main(int argc, char *argv[])
       // return 1 and abort the program
       MPI_Abort(MPI_COMM_WORLD, 1);
     }
-  } else if (world_rank == 2)
+    MPI_Comm_free(&flux_comm);
+  } else if ((world_rank < thermal_solver_ranks + flux_solver_ranks + coupler_server_ranks) && 
+              (world_rank >= thermal_solver_ranks + flux_solver_ranks))
   {
-    MPI_Comm_split(comm, 2, world_rank, &thermal_comm);
-    int thermal_solver_return_flag = thermal_solver(mesh_file_name, thermal_comm);
-    if (thermal_solver_return_flag == 1)
-    {
-      std::cout << "The thermal solver failed\n";
-      // return 1 and abort the program
-      MPI_Abort(MPI_COMM_WORLD, 1);
-    }
-  } 
+    ::gmsh::initialize();{
+    MPI_Comm_split(comm, 2, world_rank, &server_comm);
+    // load the mesh using Omega_h
+    auto lib = Omega_h::Library(&argc, &argv, server_comm);
+    const auto world = lib.world();
+    auto mesh = Omega_h::gmsh::read_parallel("../mesh/parmesh/cylinder", world);
+    // hold all the ranks here with MPI_barrier so that the reading is done in parallel and then the
+    // coupler server is called
+    
+    // print the owned entities of the mesh
+    //auto nnents_owned = mesh.nents_owned(0);
+    auto owned = mesh.owned(0);
+    auto nents_owned = std::accumulate(owned.begin(), owned.end(), 0);
+    std::stringstream ss;
+    ss << "rank: " << world_rank << " The number of owned entities is: " << nents_owned << "\n";
+    std::cout << ss.str();
 
+    MPI_Barrier(server_comm);
+    mfem_coupler(server_comm, mesh);
+    MPI_Comm_free(&server_comm);
+    ::gmsh::finalize();}
+  } else
+  {
+    // just do nothing and print that the ranks are not used
+    std::cout << "Rank " << world_rank << " not used\n";
+  }
+
+
+  MPI_Comm_free(&comm);
   // finalize MPI
   MPI_Finalize();
   if (world_rank == 0)
