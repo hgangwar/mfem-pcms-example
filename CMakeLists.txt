@@ -21,7 +21,7 @@ add_executable(mfem_adapter_unit_test test_mfem_adapter.cpp)
 target_link_libraries(mfem_adapter_unit_test PUBLIC mfem pcms::pcms)
 
 # add test_mfem_coupling as a test
-add_executable(test_mfem_coupling test_mfem_coupling.cpp)
+add_executable(test_mfem_coupling test_mfem_coupling.cpp test_support.cpp)
 target_link_libraries(test_mfem_coupling PUBLIC mfem pcms::pcms)
 
 # add this to enable testing

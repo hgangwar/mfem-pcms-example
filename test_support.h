@@ -44,6 +44,12 @@ struct ClassificationPartition
   redev::ClassPtn::ModelEntVec modelEnts;
 };
 
+struct RecursivePartition
+{
+  redev::LOs ranks;
+  std::vector<redev::Real> cuts;
+};
+
 void printTime(std::string_view mode, double min, double max, double avg);
 
 void timeMinMaxAvg(double time, double& min, double& max, double& avg);
@@ -71,6 +77,15 @@ void migrateMeshElms(Omega_h::Mesh& mesh,
  * partition on the geometric model. This function is hardcoded for a specific
  * mesh and process count.
  */
+
+/**
+ * This is the same as the above function but it uses the RCBPartition struct
+ * to determine the partitioning of the mesh elements.
+*/
+void migrateMeshElms(Omega_h::Mesh& mesh,
+                      const RecursivePartition& partition);
+
+
 ClassificationPartition migrateAndGetPartition(Omega_h::Mesh& mesh);
 
 void writeVtk(Omega_h::Mesh& mesh, std::string_view name, int step);

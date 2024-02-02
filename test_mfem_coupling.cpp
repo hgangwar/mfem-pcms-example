@@ -33,6 +33,7 @@
 #include "Omega_h_element.hpp"
 #include "Omega_h_shape.hpp"
 #include <sstream>
+#include "test_support.h"
 //#include <atomic>
 
 //using namespace Omega_h;
@@ -129,6 +130,13 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
 
   auto partition = redev::Partition{redev::RCBPtn{dim, ranks, cuts}};
   auto& rcb_partition = std::get<redev::RCBPtn>(partition);
+
+  // create the recursive partition
+  test_support::RecursivePartition recursive_partition;
+  recursive_partition.ranks = ranks;
+  recursive_partition.cuts = cuts;
+  // do mesh migration to match the partition
+  test_support::migrateMeshElms(mesh, recursive_partition);
 
   pcms::CouplerServer cpl("mfem_couple_server", comm, partition, mesh); 
 
