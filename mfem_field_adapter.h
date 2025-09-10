@@ -63,8 +63,8 @@ public:
    // REQUIRED
    // serialize the data
   int Serialize(
-    ScalarArrayView<value_type, memory_space> buffer,
-    ScalarArrayView<const pcms::LO, memory_space> permutation) const
+    Rank1View<value_type, memory_space> buffer,
+    Rank1View<const pcms::LO, memory_space> permutation) const
   {
     PCMS_FUNCTION_TIMER;
     static_assert(std::is_same_v<memory_space, pcms::HostMemorySpace>,
@@ -102,8 +102,8 @@ public:
   // REQUIRED
   // deserialize the data
   void Deserialize(
-    ScalarArrayView<const value_type, memory_space> buffer,
-    ScalarArrayView<const pcms::LO, memory_space> permutation) const
+    Rank1View<const value_type, memory_space> buffer,
+    Rank1View<const pcms::LO, memory_space> permutation) const
   {
     PCMS_FUNCTION_TIMER;
     static_assert(std::is_same_v<memory_space, pcms::HostMemorySpace>,
@@ -195,52 +195,6 @@ private:
 
 };
 
-//template <typename T, typename CoordinateElementType>
-//auto get_nodal_coordinates(
-//  const XGCFieldAdapter<T, CoordinateElementType>& field)
-//{
-//  PCMS_FUNCTION_TIMER;
-//  Kokkos::View<CoordinateElementType*,
-//               typename XGCFieldAdapter<T, CoordinateElementType>::memory_space>
-//    coordinates;
-//  return coordinates;
-//}
-//template <typename T, typename CoordinateElementType, typename MemorySpace>
-//auto evaluate(
-//  const XGCFieldAdapter<T, CoordinateElementType>& field,
-//  Lagrange<1> /* method */,
-//  ScalarArrayView<const CoordinateElementType, MemorySpace> coordinates)
-//  -> Kokkos::View<T*, MemorySpace>
-//{
-//  PCMS_FUNCTION_TIMER;
-//  Kokkos::View<T*, MemorySpace> values("data", coordinates.size() / 2);
-//  std::cerr << "Evaluation of XGC Field not implemented yet!\n";
-//  std::abort();
-//  return values;
-//}
-//template <typename T, typename CoordinateElementType, typename MemorySpace>
-//auto evaluate(
-//  const XGCFieldAdapter<T, CoordinateElementType>& field,
-//  NearestNeighbor /* method */,
-//  ScalarArrayView<const CoordinateElementType, MemorySpace> coordinates)
-//  -> Kokkos::View<T*, MemorySpace>
-//{
-//  PCMS_FUNCTION_TIMER;
-//  Kokkos::View<T*, MemorySpace> values("data", coordinates.size() / 2);
-//  std::cerr << "Evaluation of XGC Field not implemented yet!\n";
-//  std::abort();
-//  return values;
-//}
-//
-//template <typename T, typename CoordinateElementType, typename U>
-//auto set_nodal_data(
-//  const XGCFieldAdapter<T, CoordinateElementType>& field,
-//  ScalarArrayView<
-//    const U, typename XGCFieldAdapter<T, CoordinateElementType>::memory_space>
-//    data) -> void
-//{
-//  PCMS_FUNCTION_TIMER;
-//}
 
 } // namespace pcms
 

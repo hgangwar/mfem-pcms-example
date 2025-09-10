@@ -70,18 +70,18 @@ int main(int argc, char *argv[])
                   "Number of desired eigenmodes.");
    args.AddOption(&seed, "-s", "--seed",
                   "Random seed used to initialize LOBPCG.");
-#ifdef MFEM_USE_SUPERLU
-   args.AddOption(&slu_solver, "-slu", "--superlu", "-no-slu",
-                  "--no-superlu", "Use the SuperLU Solver.");
-#endif
-#ifdef MFEM_USE_STRUMPACK
-   args.AddOption(&sp_solver, "-sp", "--strumpack", "-no-sp",
-                  "--no-strumpack", "Use the STRUMPACK Solver.");
-#endif
-#ifdef MFEM_USE_MKL_CPARDISO
-   args.AddOption(&cpardiso_solver, "-cpardiso", "--cpardiso", "-no-cpardiso",
-                  "--no-cpardiso", "Use the MKL CPardiso Solver.");
-#endif
+   #ifdef MFEM_USE_SUPERLU
+      args.AddOption(&slu_solver, "-slu", "--superlu", "-no-slu",
+                     "--no-superlu", "Use the SuperLU Solver.");
+   #endif
+   #ifdef MFEM_USE_STRUMPACK
+      args.AddOption(&sp_solver, "-sp", "--strumpack", "-no-sp",
+                     "--no-strumpack", "Use the STRUMPACK Solver.");
+   #endif
+   #ifdef MFEM_USE_MKL_CPARDISO
+      args.AddOption(&cpardiso_solver, "-cpardiso", "--cpardiso", "-no-cpardiso",
+                     "--no-cpardiso", "Use the MKL CPardiso Solver.");
+   #endif
    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                   "--no-visualization",
                   "Enable or disable GLVis visualization.");
@@ -201,21 +201,21 @@ int main(int argc, char *argv[])
    HypreParMatrix *A = a->ParallelAssemble();
    HypreParMatrix *M = m->ParallelAssemble();
 
-#if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
-   Operator * Arow = NULL;
-#ifdef MFEM_USE_SUPERLU
-   if (slu_solver)
-   {
-      Arow = new SuperLURowLocMatrix(*A);
-   }
-#endif
-#ifdef MFEM_USE_STRUMPACK
-   if (sp_solver)
-   {
-      Arow = new STRUMPACKRowLocMatrix(*A);
-   }
-#endif
-#endif
+   #if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
+      Operator * Arow = NULL;
+   #ifdef MFEM_USE_SUPERLU
+      if (slu_solver)
+      {
+         Arow = new SuperLURowLocMatrix(*A);
+      }
+   #endif
+   #ifdef MFEM_USE_STRUMPACK
+      if (sp_solver)
+      {
+         Arow = new STRUMPACKRowLocMatrix(*A);
+      }
+   #endif
+   #endif
 
    delete a;
    delete m;
@@ -232,41 +232,41 @@ int main(int argc, char *argv[])
    }
    else
    {
-#ifdef MFEM_USE_SUPERLU
-      if (slu_solver)
-      {
-         SuperLUSolver * superlu = new SuperLUSolver(MPI_COMM_WORLD);
-         superlu->SetPrintStatistics(false);
-         superlu->SetSymmetricPattern(true);
-         superlu->SetColumnPermutation(superlu::PARMETIS);
-         superlu->SetOperator(*Arow);
-         precond = superlu;
-      }
-#endif
-#ifdef MFEM_USE_STRUMPACK
-      if (sp_solver)
-      {
-         STRUMPACKSolver * strumpack = new STRUMPACKSolver(argc, argv, MPI_COMM_WORLD);
-         strumpack->SetPrintFactorStatistics(true);
-         strumpack->SetPrintSolveStatistics(false);
-         strumpack->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);
-         strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
-         strumpack->DisableMatching();
-         strumpack->SetOperator(*Arow);
-         strumpack->SetFromCommandLine();
-         precond = strumpack;
-      }
-#endif
-#ifdef MFEM_USE_MKL_CPARDISO
-      if (cpardiso_solver)
-      {
-         auto cpardiso = new CPardisoSolver(A->GetComm());
-         cpardiso->SetMatrixType(CPardisoSolver::MatType::REAL_STRUCTURE_SYMMETRIC);
-         cpardiso->SetPrintLevel(1);
-         cpardiso->SetOperator(*A);
-         precond = cpardiso;
-      }
-#endif
+      #ifdef MFEM_USE_SUPERLU
+            if (slu_solver)
+            {
+               SuperLUSolver * superlu = new SuperLUSolver(MPI_COMM_WORLD);
+               superlu->SetPrintStatistics(false);
+               superlu->SetSymmetricPattern(true);
+               superlu->SetColumnPermutation(superlu::PARMETIS);
+               superlu->SetOperator(*Arow);
+               precond = superlu;
+            }
+      #endif
+      #ifdef MFEM_USE_STRUMPACK
+            if (sp_solver)
+            {
+               STRUMPACKSolver * strumpack = new STRUMPACKSolver(argc, argv, MPI_COMM_WORLD);
+               strumpack->SetPrintFactorStatistics(true);
+               strumpack->SetPrintSolveStatistics(false);
+               strumpack->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);
+               strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
+               strumpack->DisableMatching();
+               strumpack->SetOperator(*Arow);
+               strumpack->SetFromCommandLine();
+               precond = strumpack;
+            }
+      #endif
+      #ifdef MFEM_USE_MKL_CPARDISO
+            if (cpardiso_solver)
+            {
+               auto cpardiso = new CPardisoSolver(A->GetComm());
+               cpardiso->SetMatrixType(CPardisoSolver::MatType::REAL_STRUCTURE_SYMMETRIC);
+               cpardiso->SetPrintLevel(1);
+               cpardiso->SetOperator(*A);
+               precond = cpardiso;
+            }
+      #endif
    }
 
    HypreLOBPCG * lobpcg = new HypreLOBPCG(MPI_COMM_WORLD);

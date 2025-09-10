@@ -39,7 +39,7 @@ Clad and coolant are not included in this model.
 #include "pcms/pcms.h"
 #include "mfem_field_adapter.h"
 
-using pcms::CouplerClient;
+using pcms::Coupler;
 using pcms::MFEMFieldAdapter;
 //# define RAND_MAX 100
 
@@ -237,7 +237,7 @@ int main(int argc, char *argv[])
 
    // receive density from the thermal solver
    ParGridFunction dent(fespace);
-   CouplerClient cpl("fluxClient", MPI_COMM_WORLD);
+   Coupler cpl("fluxClient", MPI_COMM_WORLD);
    // ? No addfield needed? how it's gonna know where to save the data?
    cpl.AddField("density", MFEMFieldAdapter(std::string("flux2th"), *pmesh, *fespace, dent));
 
