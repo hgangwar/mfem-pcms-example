@@ -8,9 +8,11 @@
 #include <Omega_h_array_ops.hpp>
 #include <redev.h>
 #include <redev_comm.h>
-#include <pcms/external/span.h>
+#include "mdspan/mdspan.hpp"
+#include <span>
+#include <pcms/pcms.h>
 #include <pcms/memory_spaces.h>
-#include <pcms/omega_h_field.h>
+#include <pcms/adapter/omega_h/omega_h_field.h>
 #include <functional>
 
 namespace test_support
@@ -46,8 +48,9 @@ struct ClassificationPartition
 
 struct RecursivePartition
 {
+  redev::LO dim;
   redev::LOs ranks;
-  std::vector<redev::Real> cuts;
+  redev::Reals cuts;
 };
 
 void printTime(std::string_view mode, double min, double max, double avg);
@@ -82,8 +85,9 @@ void migrateMeshElms(Omega_h::Mesh& mesh,
  * This is the same as the above function but it uses the RCBPartition struct
  * to determine the partitioning of the mesh elements.
 */
+
 void migrateMeshElms(Omega_h::Mesh& mesh,
-                      const RecursivePartition& partition);
+                      const pcms::Partition& partitions);
 
 
 ClassificationPartition migrateAndGetPartition(Omega_h::Mesh& mesh);
@@ -272,7 +276,7 @@ struct Divide
 struct MeanCombiner
 {
   void operator()(
-    const nonstd::span<const std::reference_wrapper<pcms::InternalField>>&
+      const std::span<const std::reference_wrapper<pcms::InternalField>>&
       fields,
     pcms::InternalField& combined_variant) const
   {

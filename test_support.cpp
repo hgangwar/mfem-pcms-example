@@ -6,6 +6,7 @@
 #include <fstream>             // ifstream
 #include <mpi.h>
 #include <redev_exclusive_scan.h>
+#include <pcms/pcms.h>
 
 namespace test_support
 {
@@ -328,41 +329,40 @@ void migrateMeshElms(Omega_h::Mesh& mesh,
  * I think the mesh passeed to this function shouldn't be partitioned
 */
 void migrateMeshElms(Omega_h::Mesh& mesh,
-                      const RecursivePartition& partition)
+                      const pcms::Partition& partitions)
 {
-  std::cout << "migrateMeshElms\n";
   auto ohComm = mesh.comm();
   auto mpiComm = ohComm->get_impl();
   const auto rank = ohComm->rank();
-  if (rank)
+  if (rank) {
     // only rank zero should have elements
     REDEV_ALWAYS_ASSERT(mesh.nelems() == 0);
+  }
+
   if (!rank) {
     const auto dim = mesh.dim();
-
     // now I am only hardcoding for 3D mesh with 2 ranks
-
     std::map<int, std::vector<int>> elemsPerRank;
     auto coords = mesh.coords();
     const auto tris2verts = mesh.ask_elem_verts();
-
     for (int i = 0; i < mesh.nelems(); i++) {
-        // get the coordinates of the elements
-        const auto tri_j2verts = Omega_h::gather_verts<3>(tris2verts, i);
-        const auto tri_j2x = Omega_h::gather_vectors<3,2>(coords, tri_j2verts);
-        
-        // FIXME: two issues here: 1: I don't know how to read OH::Matrix
-        // 2: > 0.5 is hard coded
-        if (tri_j2x(0, 0) > 0.5) {
-            elemsPerRank[1].push_back(i);
-        } else {
-            elemsPerRank[0].push_back(i);
-        }
-        //std::cout << tri_j2x(0, 0) << "\n";
+      // get the coordinates of the elements
+      const auto tri_j2verts = Omega_h::gather_verts<4>(tris2verts, i);
+      const auto tri_j2x = Omega_h::gather_vectors<4,3>(coords, tri_j2verts);
+      
+      Omega_h::Vector<3> centroid = Omega_h::zero_vector<3>();
+      for (int i = 0; i < 4; ++i) {
+        centroid += tri_j2x[i];
+      }
+      centroid /= 4.0;
+      std::array<double,3> points = {centroid[0], centroid[1], centroid[2]};
+      
+      auto rank = partitions.GetDr(i, dim, points);
+      elemsPerRank[rank].push_back(i);
     }
-
-    // make sure we are not sending elements to ranks that don't exist
     REDEV_ALWAYS_ASSERT(elemsPerRank.size() == ohComm->size());
+    //printf("Number of elements on rank %d: %d\n", rank, elemsPerRank[rank].size());
+    //printf("Number of elements on rank %d: %d\n", 1, elemsPerRank[1].size());
     for (auto iter = elemsPerRank.begin(); iter != elemsPerRank.end(); iter++) {
       const auto dest = iter->first;
       REDEV_ALWAYS_ASSERT(dest <
@@ -376,6 +376,7 @@ void migrateMeshElms(Omega_h::Mesh& mesh,
         MPI_Send(elms.data(), elms.size(), MPI_INT, dest, 0, mpiComm);
       }
     }
+
     // fill a device array with the element ids that remain on rank 0
     const auto elems = elemsPerRank[0];
     const auto numElems = elems.size();
@@ -389,7 +390,6 @@ void migrateMeshElms(Omega_h::Mesh& mesh,
     Omega_h::Write elemRanks_d(elemRanks);
     // create remotes
     auto owners = Omega_h::Remotes(elemRanks_d, elemIdxs_d);
-    // call migrate
     mesh.migrate(owners);
   } else { 
     const int src = 0;
@@ -634,64 +634,7 @@ OutMsg prepareRdvOutMessage(Omega_h::Mesh& mesh,
   out.offset.push_back(sum);
   return out;
 }
-//Omega_h::Read<Omega_h::I8> markServerOverlapRegion(
-//  Omega_h::Mesh& mesh, const redev::ClassPtn& classPtn,
-//  const EntInOverlapFunc& entInOverlap)
-//{
-//  int rank;
-//  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-//  // transfer vtx classification to host
-//  auto classIds = mesh.get_array<Omega_h::ClassId>(0, "class_id");
-//  auto classIds_h = Omega_h::HostRead(classIds);
-//  auto classDims = mesh.get_array<Omega_h::I8>(0, "class_dim");
-//  auto classDims_h = Omega_h::HostRead(classDims);
-//  auto isOverlap = Omega_h::Write<Omega_h::I8>(classIds.size(), "isOverlap");
-//  Omega_h::parallel_for(
-//    classIds.size(), OMEGA_H_LAMBDA(int i) {
-//      isOverlap[i] = entInOverlap(classDims[i], classIds[i]);
-//    });
-//  auto owned_h = Omega_h::HostRead(mesh.owned(0));
-//  auto isOverlap_h = Omega_h::HostRead<Omega_h::I8>(isOverlap);
-//  // mask to only class partition owned entities
-//  auto isOverlapOwned = Omega_h::HostWrite<Omega_h::I8>(
-//    classIds.size(), "isOverlapAndOwnsModelEntInClassPartition");
-//  for (int i = 0; i < mesh.nverts(); i++) {
-//    redev::ClassPtn::ModelEnt ent(classDims_h[i], classIds_h[i]);
-//    auto destRank = classPtn.GetRank(ent);
-//    auto isModelEntOwned = (destRank == rank);
-//    isOverlapOwned[i] = isModelEntOwned && isOverlap_h[i];
-//    if (owned_h[i] && !isModelEntOwned) {
-//      fprintf(stderr, "%d owner conflict %d ent (%d,%d) owner %d owned %d\n",
-//              rank, i, classDims_h[i], classIds_h[i], destRank, owned_h[i]);
-//    }
-//  }
-//  auto isOverlapOwned_dr = Omega_h::Read<Omega_h::I8>(isOverlapOwned);
-//  // auto isOverlapOwned_hr = Omega_h::HostRead(isOverlapOwned_dr);
-//  mesh.add_tag(0, "isOverlap", 1, isOverlapOwned_dr);
-//  return isOverlapOwned_dr;
-//}
-//Omega_h::Read<Omega_h::I8> markOverlapMeshEntities(
-//  Omega_h::Mesh& mesh, const EntInOverlapFunc& entInOverlap)
-//{
-//  // transfer vtx classification to host
-//  auto classIds = mesh.get_array<Omega_h::ClassId>(0, "class_id");
-//  auto classDims = mesh.get_array<Omega_h::I8>(0, "class_dim");
-//  auto isOverlap = Omega_h::Write<Omega_h::I8>(classIds.size(), "isOverlap");
-//  auto markOverlap = OMEGA_H_LAMBDA(int i)
-//  {
-//    isOverlap[i] = entInOverlap(classDims[i], classIds[i]);
-//  };
-//  Omega_h::parallel_for(classIds.size(), markOverlap);
-//  auto isOwned = mesh.owned(0);
-//  // try masking out to only owned entities
-//  Omega_h::parallel_for(
-//    isOverlap.size(),
-//    OMEGA_H_LAMBDA(int i) { isOverlap[i] = (isOwned[i] && isOverlap[i]); });
-//
-//  auto isOverlap_r = Omega_h::read(isOverlap);
-//  mesh.add_tag(0, "isOverlap", 1, isOverlap_r);
-//  return isOverlap_r;
-//}
+
 redev::ClassPtn setupServerPartition(Omega_h::Mesh& mesh,
                                      std::string_view cpnFileName)
 {
@@ -705,5 +648,4 @@ redev::ClassPtn setupServerPartition(Omega_h::Mesh& mesh,
   auto ptn = ts::CreateClassificationPartition(mesh);
   return redev::ClassPtn(MPI_COMM_WORLD, ptn.ranks, ptn.modelEnts);
 }
-
 } // namespace test_support

@@ -2,16 +2,17 @@
 # This script is used to run the MFEM coupling test with mpirun
 
 # load the sources
-source ../loads.sh
+#source ../loads.sh
 PROGRAM_NAME=$1
-#echo $PROGRAM_NAME
+echo $PROGRAM_NAME
 
-mpirun -np 3 $PROGRAM_NAME
+#gdb --args 
+mpirun -np 3 $PROGRAM_NAME 
 OUTPUT=$?
 
 if [ $OUTPUT -eq 0 ]
 then
-  exit 0
+  echo "Successful!"
 else
-  exit 1
+  echo "Failed!"
 fi

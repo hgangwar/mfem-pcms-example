@@ -24,7 +24,7 @@
 #include "pcms/pcms.h"
 #include "mfem_field_adapter.h"
 
-using pcms::CouplerClient;
+using pcms::Coupler;
 using pcms::MFEMFieldAdapter;
 //# define RAND_MAX 100
 
@@ -316,11 +316,12 @@ int main(int argc, char *argv[])
    // send x to the coupler
    // send data using the coupler
    std::cout << "thermalSolver: start sending data to the coupler. \n";
-   CouplerClient cpl("thermalClient", MPI_COMM_WORLD);
-   cpl.AddField("density", MFEMFieldAdapter(std::string("thermal_density"), *pmesh, *fespace, x));
-   cpl.BeginSendPhase();
-   cpl.SendField("density");
-   cpl.EndSendPhase();
+   Coupler cpl("mfem_coupler", MPI_COMM_WORLD, false, {});
+   auto* app =  cpl.AddApplication("thermalSolver");
+   app->AddField("density", MFEMFieldAdapter(std::string("thermal_density"), *pmesh, *fespace, x));
+   app->BeginSendPhase();
+   app->SendField("density");
+   app->EndSendPhase();
    std::cout << "thermalSolver: end sending data to the coupler. \n";
 
    // 11. Send the solution by socket to a GLVis server.
