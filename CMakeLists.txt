@@ -32,8 +32,8 @@ target_link_libraries(test_mfem_coupling PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIE
 add_executable(test_read test_read.cpp)
 target_link_libraries(test_read PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
 
-add_executable(mpi_dup mpi_dup.cpp)
-target_link_libraries(mpi_dup PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
+add_executable(debug debug.cpp)
+target_link_libraries(debug PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
 
 # add this to enable testing
 enable_testing()

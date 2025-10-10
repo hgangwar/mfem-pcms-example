@@ -152,13 +152,38 @@ namespace pcms
     pcms::LO dim = pmesh_.Dimension();
     pcms::LO local_index=0;
 
-    // we need to create a counter for local index
-    //printf("vcoords.Size()=%d\n", vcoords.Size());
-    for (auto i = 0; i < vcoords.Size(); i+=3) { // class ids will be replaced with the node points
-      std::array<double,3> coord{vcoords[i], vcoords[i+1], vcoords[i+2]};
-      auto dr = partition.GetDr(local_index, dim, coord);
-      reverse_partition[dr].emplace_back(local_index++); // it should be some counter since it is going 3 at a time
-    }     
+    pcms::LO num_elems = pmesh_.GetNE();
+    std::cout << "Number of elements: " << num_elems << std::endl;
+
+    for (int i = 0; i < num_elems; i++)
+    {
+      // Get the element
+      mfem::Element *el = pmesh_.GetElement(i);
+      pcms::LO geom_type = el->GetGeometryType();
+      
+      // Get vertex indices of the element
+      mfem::Array<int> v;
+      el->GetVertices(v);
+      
+      // Compute centroid
+      std::array<double,3> centroid = {};
+      for (int j = 0; j < v.Size(); j++)
+      {
+        double *vert = pmesh_.GetVertex(v[j]);
+        centroid[0] += vert[0];
+        centroid[1] += vert[1];
+        centroid[2] += vert[2];
+      }
+
+      for ( double& c: centroid)
+        c /= (double)v.Size();
+      
+      auto dr = partition.GetDr(local_index, dim, centroid);
+
+      for ( int j =0; j < v.Size(); j++)
+        reverse_partition[dr].emplace_back(local_index++); 
+
+    }   
   return reverse_partition;
   }
 
