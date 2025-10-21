@@ -7,7 +7,7 @@
 #include <mpi.h>
 #include <redev_exclusive_scan.h>
 #include <pcms/pcms.h>
-
+#include <Omega_h_vtk.hpp>
 namespace test_support
 {
 
@@ -247,6 +247,40 @@ ClassificationPartition CreateClassificationPartition(Omega_h::Mesh& mesh)
   }
   return fromMap(m2r);
 }
+/**
+ * Save mesh elements to the separete meshes using rank2elem map
+ * @param mesh        The full Omega_h mesh.
+ * @param rank2elem   Mapping: rank → list of element IDs belonging to that rank.
+ */
+void save_ptn_mesh(Omega_h::Mesh& mesh,
+                   const std::map<int, std::vector<int>>& rank2elem)
+{
+  const int nelems = mesh.nelems();
+  Omega_h::Write<Omega_h::I32> elem_rank(nelems, -1);
+
+  // Assign rank IDs to each element based on rank2elem mapping
+  for (const auto& [rank, elems] : rank2elem) {
+    for (auto eid : elems) {
+      if (eid >= 0 && eid < nelems)
+        elem_rank[eid] = rank;
+      else
+        fprintf(stderr, "[save_ptn_mesh] Warning: invalid element id %d for rank %d\n", eid, rank);
+    }
+  }
+
+  // Remove existing "rank" tag if it exists
+  if (mesh.has_tag(mesh.dim(), "rank"))
+    mesh.remove_tag(mesh.dim(), "rank");
+
+  // Add the new "rank" tag to elements (region dimension)
+  mesh.add_tag<Omega_h::I32>(mesh.dim(), "rank", 1);
+  mesh.set_tag<Omega_h::I32>(mesh.dim(), "rank", Omega_h::Read<Omega_h::I32>(elem_rank));
+
+  printf("[save_ptn_mesh] Added rank tag to mesh elements.\n");
+
+  // Save mesh in .osh format
+  Omega_h::binary::write("partioned_cylinder.osh", &mesh);
+}
 
 void migrateMeshElms(Omega_h::Mesh& mesh,
                      const ClassificationPartition& partition)
@@ -344,15 +378,17 @@ void migrateMeshElms(Omega_h::Mesh& mesh,
     // now I am only hardcoding for 3D mesh with 2 ranks
     std::map<int, std::vector<int>> elemsPerRank;
     auto coords = mesh.coords();
-    const auto tris2verts = mesh.ask_elem_verts();
+    const auto elem2verts = mesh.ask_elem_verts();
+    std::cout << "Number of elements: " << mesh.nelems() << std::endl;
+    int counter = 0;
     for (int i = 0; i < mesh.nelems(); i++) {
       // get the coordinates of the elements
-      const auto tri_j2verts = Omega_h::gather_verts<4>(tris2verts, i);
-      const auto tri_j2x = Omega_h::gather_vectors<4,3>(coords, tri_j2verts);
+      const auto tet_verts = Omega_h::gather_verts<4>(elem2verts, i);
+      const auto tet_coords = Omega_h::gather_vectors<4,3>(coords, tet_verts);
       
       Omega_h::Vector<3> centroid = Omega_h::zero_vector<3>();
       for (int i = 0; i < 4; ++i) {
-        centroid += tri_j2x[i];
+        centroid += tet_coords[i];
       }
       centroid /= 4.0;
       std::array<double,3> points = {centroid[0], centroid[1], centroid[2]};
@@ -360,9 +396,14 @@ void migrateMeshElms(Omega_h::Mesh& mesh,
       auto rank = partitions.GetDr(i, dim, points);
       elemsPerRank[rank].push_back(i);
     }
+    for ( const auto& [rank, elem_vec] : elemsPerRank ){
+      printf("Element on rank %d : %d\n", rank, elem_vec.size());
+      counter+=(elem_vec.size());
+    }
+    save_ptn_mesh(mesh, elemsPerRank);
+    printf("Elements on all Ranks:%d\n", counter);
     REDEV_ALWAYS_ASSERT(elemsPerRank.size() == ohComm->size());
-    //printf("Number of elements on rank %d: %d\n", rank, elemsPerRank[rank].size());
-    //printf("Number of elements on rank %d: %d\n", 1, elemsPerRank[1].size());
+
     for (auto iter = elemsPerRank.begin(); iter != elemsPerRank.end(); iter++) {
       const auto dest = iter->first;
       REDEV_ALWAYS_ASSERT(dest <

@@ -102,6 +102,7 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
   
   redev::LO dim = 3; // 3D case
   redev::LOs ranks(comm_size);
+  
   std::iota(ranks.begin(),ranks.end(),0);
   
   // check if the comm_size is power of 2
@@ -113,12 +114,13 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
   }
 
   //std::vector<pcms::Real> cuts = get_cut_positions(comm_size);
-  redev::Reals cuts={0, 0.5};
+  //redev::Reals cuts={0, 0.5};
+  redev::Reals cuts={0};
 
   auto partition = redev::Partition{redev::RCBPtn{dim, ranks, cuts}};
   auto& rcb_partition = std::get<redev::RCBPtn>(partition);
 
-  // create the recursive partition
+  // create the recursive partition1
   test_support::RecursivePartition recursive_partition;
   recursive_partition.ranks = ranks;
   recursive_partition.cuts = cuts;
@@ -126,7 +128,7 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
   
   // do mesh migration to match the partition
 
-  test_support::migrateMeshElms(mesh, partition);
+  //test_support::migrateMeshElms(mesh, partition);
   pcms::Coupler cpl("mfem_coupler", comm, true, partition); 
 
   auto* flux_app = cpl.AddApplication("fluxClient");
@@ -143,10 +145,10 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
 
 
   auto* flux_density_field = flux_app->AddField(
-    "density", OmegaHFieldAdapter<GO>("flux_density", mesh, is_overlap));
+    "density", OmegaHFieldAdapter<pcms::Real>("density_gids", mesh, is_overlap));
 
   auto* thermal_density_field = thermal_app->AddField(
-    "density", OmegaHFieldAdapter<GO>("flux_density", mesh, is_overlap));
+    "density", OmegaHFieldAdapter<pcms::Real>("density_gids", mesh, is_overlap));
   
   std::cout << "coupler: fields are created \n";
 
@@ -155,6 +157,10 @@ void mfem_coupler(MPI_Comm comm, Omega_h::Mesh& mesh)
   std::cout << "coupler: done receiving, starting send\n";
   flux_app->SendPhase([&]() { flux_density_field->Send(); });
   std::cout << "coupler: done sending to fluxSolver\n";
+
+
+  std::cout << "The test passed\n";
+
 }
 
 // thermal solver function for dummy thermal solver
@@ -189,7 +195,7 @@ int thermal_solver(const std::string& mesh_file_name, MPI_Comm comm)
   pcms::Coupler cpl("mfem_coupler", comm, false, {});
   printf("Initialized Thermal Solver Coupler Client.\n");
   auto* app =  cpl.AddApplication("thermalClient");
-  app->AddField("density", MFEMFieldAdapter(std::string("thermal_density"), *pmesh, *fespace, pgf));
+  app->AddField("density", MFEMFieldAdapter(std::string("thermalClient"), *pmesh, *fespace, pgf));
   app->BeginSendPhase();
   app->SendField("density");
   app->EndSendPhase();
@@ -242,7 +248,7 @@ int flux_solver(const std::string& mesh_file_name, MPI_Comm comm)
 
   try {
     auto* app = cpl.AddApplication("fluxClient"); 
-    app->AddField("density", MFEMFieldAdapter(std::string("flux_density"), *pmesh, *fespace, pgf));
+    app->AddField("density", MFEMFieldAdapter(std::string("fluxClient"), *pmesh, *fespace, pgf));
     app->BeginReceivePhase();
     app->ReceiveField("density");
     app->EndReceivePhase();
@@ -398,10 +404,7 @@ int main(int argc, char *argv[])
 
 
   MPI_Comm_free(&comm);
-  if (world_rank == 0)
-  {
-    std::cout << "The test passed\n";
-  }
+  
   // finalize MPI
   MPI_Finalize();
 }
