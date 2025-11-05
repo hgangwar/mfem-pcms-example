@@ -29,11 +29,18 @@ target_link_libraries(mfem_adapter_unit_test PUBLIC mfem pcms::pcms  ${Gmsh_LIBR
 add_executable(test_mfem_coupling test_mfem_coupling.cpp test_support.cpp)
 target_link_libraries(test_mfem_coupling PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
 
-add_executable(test_read test_read.cpp)
-target_link_libraries(test_read PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
+# add test_mfem_coupling as a test
+add_executable(convg_test test_coupling_convg.cpp test_support.cpp)
+target_link_libraries(convg_test PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
 
-add_executable(debug debug.cpp)
-target_link_libraries(debug PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
+#add_executable(test_read test_read.cpp)
+#target_link_libraries(test_read PUBLIC mfem pcms::pcms ${Gmsh_LIBRARIES})
+
+#add_executable(te_coupling thermo_elastic_coupling.cpp)
+#target_link_libraries(te_coupling PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
+
+add_executable(tt_coupling thermo_thermo_coupling.cpp)
+target_link_libraries(tt_coupling PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
 
 # add this to enable testing
 enable_testing()

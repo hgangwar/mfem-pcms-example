@@ -5,6 +5,7 @@ cmake -S . -B build \
 	-DCMAKE_INSTALL_PREFIX=$HOME/src/mfem-pcms-example/install \
 	-DMFEM_ROOT=$HOME/src/MFEM/mfem/install \
 	-Dpcms_ROOT=$HOME/src/PCMS/build/ADA89/pcms/install \
+	-DOmega_h_ROOT=$HOME/src/PCMS/deps/build/ADA89/omega_h/install/ \
 	-Dperfstubs_DIR=$HOME/src/PCMS/deps/build/perfstubs/install/lib/cmake/ \
 	-DCMAKE_PREFIX_PATH=/users/gangwh/src/gmsh/build/install/ \
   	-DCMAKE_BUILD_TYPE=Debug
