@@ -216,6 +216,7 @@ static void app_A(MPI_Comm comm, string mesh_file, string solver_type = "CG",
     // Receive from C to A
     client.apps["client_A"]->ReceivePhase(
       [&]() { client.fields["client_A"]->Receive(); });
+    // sleep(10);
   } while (!done);
 }
 
@@ -246,6 +247,7 @@ static void app_B(MPI_Comm comm, string mesh_file, string solver_type = "CG",
     // Send from B to C
     client.apps["client_B"]->SendPhase(
       [&]() { client.fields["client_B"]->Send(); });
+    // sleep(10);
   } while (!done);
 }
 
@@ -255,7 +257,11 @@ void coupler(MPI_Comm comm, std::string mesh_file)
   auto world = lib.world();
   Omega_h::Mesh mesh(&lib);
   Omega_h::binary::read(mesh_file, world, &mesh);
-  mesh.add_tag<pcms::Real>(Omega_h::VERT, "temp", 0);
+
+  const auto nverts = mesh.nverts();
+  Omega_h::Write<pcms::Real> init(nverts, 0.0); // init with zero
+  mesh.add_tag<pcms::Real>(Omega_h::VERT, "temp", 1, init);
+  mesh.add_tag<pcms::Real>(Omega_h::VERT, "prev_temp", 1, init);
   auto isOwned = mesh.owned(0);
   // is_overlap is a vector of size mesh.nents(0) and is initialized to 1
   Omega_h::Write<Omega_h::I8> is_overlap(mesh.nents(0));
@@ -284,13 +290,6 @@ void coupler(MPI_Comm comm, std::string mesh_file)
   bool first_itr = true;
   pcms::OmegaHField<pcms::Real> field_T("prev_temp", mesh); // field_Tn (empty)
   do {
-    // Get the Coupler field
-    auto* adapter = server.fields["client_A"]
-                      ->GetFieldAdapter<pcms::OmegaHFieldAdapter<pcms::Real>>();
-    const auto& adapter_field = adapter->GetField(); // field_Tn+1
-
-    // --- before update: deep copy of current field values
-    pcms::copy_field(adapter_field, field_T);
     auto field_C = mesh.get_array<pcms::Real>(0, "prev_temp");
 
     // Receive from A to C
@@ -298,8 +297,7 @@ void coupler(MPI_Comm comm, std::string mesh_file)
       [&]() { server.fields["client_A"]->Receive(); });
 
     // --- after update: read new field values (zero-copy)
-    auto field_AC =
-      pcms::get_nodal_data<pcms::Real>(adapter_field); // read only view
+    auto field_AC = mesh.get_array<pcms::Real>(0, "temp");
 
     const auto n = field_C.size();
     Omega_h::Write<pcms::Real> sq_diff(n);
@@ -312,12 +310,55 @@ void coupler(MPI_Comm comm, std::string mesh_file)
       });
 
     // Global sum
-    const double sum_sq = Omega_h::get_sum(Omega_h::Reals(
+    double sum_sq = Omega_h::get_sum(Omega_h::Reals(
       sq_diff)); // MPI_reduce not requried in the no partition case
-    const double rms = std::sqrt(sum_sq / static_cast<double>(n));
-    printf(" RMS for the field difference:%d\n", rms);
+    double rms = std::sqrt(sum_sq / static_cast<double>(n));
+    printf(" RMS for the field difference (A-C):%d\n", rms);
     server.apps["client_B"]->SendPhase(
       [&]() { server.fields["client_B"]->Send(); });
+
+    // Get the Coupler field
+    auto* adapter = server.fields["client_A"]
+                      ->GetFieldAdapter<pcms::OmegaHFieldAdapter<pcms::Real>>();
+    const auto& adapter_field = adapter->GetField(); // field_Tn+1
+
+    // --- before update: deep copy of current field values
+    pcms::copy_field(adapter_field, field_T);
+    // sleep(20);
+
+    // From B to C to A
+    field_C = mesh.get_array<pcms::Real>(0, "prev_temp");
+    // Receive from A to C
+    server.apps["client_B"]->ReceivePhase(
+      [&]() { server.fields["client_B"]->Receive(); });
+
+    // --- after update: read new field values (zero-copy)
+    auto field_CB = mesh.get_array<pcms::Real>(0, "temp");
+
+    // --- Compute squared difference on device
+    Omega_h::parallel_for(
+      n, OMEGA_H_LAMBDA(Omega_h::LO i) {
+        const pcms::Real diff = field_AC[i] - field_C[i];
+        sq_diff[i] = diff * diff;
+      });
+
+    // Global sum
+    sum_sq = Omega_h::get_sum(Omega_h::Reals(
+      sq_diff)); // MPI_reduce not requried in the no partition case
+    rms = std::sqrt(sum_sq / static_cast<double>(n));
+    printf(" RMS for the field difference (B-C):%d\n", rms);
+
+    server.apps["client_A"]->SendPhase(
+      [&]() { server.fields["client_A"]->Send(); });
+
+    // Get the Coupler field
+    auto* adapter_BC =
+      server.fields["client_A"]
+        ->GetFieldAdapter<pcms::OmegaHFieldAdapter<pcms::Real>>();
+    const auto& adapter_field_BC = adapter_BC->GetField(); // field_Tn+1
+
+    // --- before update: deep copy of current field values
+    pcms::copy_field(adapter_field_BC, field_T);
 
   } while (!done);
   std::cout << "The system converged\n";
