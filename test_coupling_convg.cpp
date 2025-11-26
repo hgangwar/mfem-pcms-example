@@ -32,7 +32,7 @@
 #include <Omega_h_for.hpp>
 #include <redev_variant_tools.h>
 #include <pcms/adapter/omega_h/omega_h_field.h>
-#include <gmsh.h>
+// #include <gmsh.h>
 #include "Omega_h_element.hpp"
 #include "Omega_h_shape.hpp"
 #include <sstream>
@@ -47,6 +47,7 @@ using pcms::OmegaHFieldAdapter;
 
 using namespace mfem;
 using namespace std;
+namespace ts = test_support;
 
 // Solve one thermal subproblem of the form:
 //   (kappa ∇T, ∇v) + beta (T, v) = (rhs_coeff, v)  with essential BCs on
@@ -99,12 +100,13 @@ Coupling Init_Coupler(MPI_Comm comm, const std::string& name,
 
 struct FEMSystem
 {
+  mfem::Mesh* mesh = nullptr;
   mfem::ParMesh* pmesh = nullptr;
   mfem::H1_FECollection* fec = nullptr;
   mfem::ParFiniteElementSpace* fes = nullptr;
   mfem::Array<int> ess_bdr;
-  mfem::BilinearForm* a = nullptr;
-  mfem::LinearForm* b = nullptr;
+  mfem::ParBilinearForm* a = nullptr;
+  mfem::ParLinearForm* b = nullptr;
   mfem::ParGridFunction* x = nullptr;
   mfem::DomainLFIntegrator* rhs_int = nullptr;
 };
@@ -116,9 +118,9 @@ FEMSystem Init_FEMSystem(MPI_Comm comm, const std::string& mesh_file, int order)
 {
   FEMSystem sys;
 
-  auto* mesh = new mfem::Mesh(mesh_file.c_str(), 1, 1, true);
+  sys.mesh = new mfem::Mesh(mesh_file.c_str(), 1, 1, true);
 
-  sys.pmesh = new mfem::ParMesh(comm, *mesh);
+  sys.pmesh = new mfem::ParMesh(comm, *sys.mesh);
 
   int dim = sys.pmesh->Dimension();
 
@@ -130,13 +132,13 @@ FEMSystem Init_FEMSystem(MPI_Comm comm, const std::string& mesh_file, int order)
   if (sys.ess_bdr.Size() > 0)
     sys.ess_bdr[0] = 1;
 
-  sys.a = new BilinearForm(sys.fes);
-  mfem::ConstantCoefficient kappa(1.0);
+  sys.a = new mfem::ParBilinearForm(sys.fes);
+  mfem::ConstantCoefficient kappa(130.0);
   sys.a->AddDomainIntegrator(new DiffusionIntegrator(kappa));
   sys.a->Assemble();
   sys.a->Finalize();
-  mfem::ConstantCoefficient f(0.0);
-  sys.b = new LinearForm(sys.fes);
+  mfem::ConstantCoefficient f(100.0);
+  sys.b = new mfem::ParLinearForm(sys.fes);
   sys.rhs_int = new DomainLFIntegrator(f);
   sys.b->AddDomainIntegrator(sys.rhs_int);
   sys.b->Assemble();
@@ -152,47 +154,88 @@ FEMSystem Init_FEMSystem(MPI_Comm comm, const std::string& mesh_file, int order)
 //--------------------------------------------
 void SolveSystem(FEMSystem& sys, const std::string& solver_type,
                  const std::string& prec_type, double rel_tol = 1e-8,
-                 int max_iter = 500, int print_level = 1)
+                 int max_iter = 500, int print_level = 5)
 {
-  SparseMatrix& A = sys.a->SpMat();
-  // Choose preconditioner
-  std::unique_ptr<Solver> prec;
-  if (prec_type == "Jacobi") {
-    prec = std::make_unique<DSmoother>(A);
-  } else if (prec_type == "GS") {
-    prec = std::make_unique<GSSmoother>(A);
-  }
-#ifdef MFEM_USE_HYPRE
-  else if (prec_type == "HypreAMG") {
-    prec = std::make_unique<HypreBoomerAMG>(A);
-  }
-#endif
-  else {
-    std::cerr << "Unknown preconditioner: " << prec_type << std::endl;
-    exit(1);
-  }
-  // Choose solver
-  std::unique_ptr<IterativeSolver> solver;
-  if (solver_type == "CG") {
-    solver = std::make_unique<CGSolver>();
-  } else if (solver_type == "MINRES") {
-    solver = std::make_unique<MINRESSolver>();
-  } else if (solver_type == "GMRES") {
-    solver = std::make_unique<GMRESSolver>();
+  // --------------------------------------------------
+  // Compute essential true DOFs (Dirichlet BCs)
+  // --------------------------------------------------
+  mfem::Array<int> ess_tdof_list;
+  sys.fes->GetEssentialTrueDofs(sys.ess_bdr, ess_tdof_list);
+
+  // --------------------------------------------------
+  // Form the parallel linear system A X = B
+  // --------------------------------------------------
+  mfem::OperatorPtr A; // Owned smart pointer for operator
+  mfem::HypreParVector X, B;
+
+  sys.a->FormLinearSystem(ess_tdof_list, *sys.x, *sys.b, A, X, B);
+
+  // Extract actual Hypre matrix pointer for Hypre-based preconditioners
+  auto* A_hypre = A.As<mfem::HypreParMatrix>();
+  MFEM_VERIFY(A_hypre, "FormLinearSystem did not produce a HypreParMatrix.");
+
+  // --------------------------------------------------
+  // Select preconditioner (Hypre-only)
+  // --------------------------------------------------
+  std::unique_ptr<mfem::Solver> prec;
+
+  if (prec_type == "HypreAMG") {
+    auto amg = std::make_unique<mfem::HypreBoomerAMG>(*A_hypre);
+    prec = std::move(amg);
+  } else if (prec_type == "Jacobi") {
+    auto hs = std::make_unique<mfem::HypreSmoother>(*A_hypre);
+    hs->SetType(mfem::HypreSmoother::Jacobi);
+    prec = std::move(hs);
   } else {
-    std::cerr << "Unknown solver: " << solver_type << std::endl;
-    exit(1);
+    if (sys.fes->GetParMesh()->GetMyRank() == 0)
+      std::cerr << "Unknown preconditioner: " << prec_type << std::endl;
+    return;
   }
-  solver->SetOperator(A);
+
+  // --------------------------------------------------
+  // Choose parallel iterative solver
+  // --------------------------------------------------
+  std::unique_ptr<mfem::IterativeSolver> solver;
+  MPI_Comm comm = sys.fes->GetParMesh()->GetComm();
+
+  if (solver_type == "CG")
+    solver = std::make_unique<mfem::CGSolver>(comm);
+  else if (solver_type == "MINRES")
+    solver = std::make_unique<mfem::MINRESSolver>(comm);
+  else if (solver_type == "GMRES")
+    solver = std::make_unique<mfem::GMRESSolver>(comm);
+  else {
+    if (sys.fes->GetParMesh()->GetMyRank() == 0)
+      std::cerr << "Unknown solver: " << solver_type << std::endl;
+    return;
+  }
+
+  solver->SetOperator(*A);
+  solver->SetPreconditioner(*prec);
   solver->SetRelTol(rel_tol);
+  solver->SetAbsTol(0.0);
   solver->SetMaxIter(max_iter);
   solver->SetPrintLevel(print_level);
-  solver->SetPreconditioner(*prec);
-  solver->Mult(*sys.b, *sys.x);
+
+  // --------------------------------------------------
+  // Solve system
+  // --------------------------------------------------
+  solver->Mult(B, X);
+
+  // --------------------------------------------------
+  // Recover finite element solution
+  // --------------------------------------------------
+  sys.a->RecoverFEMSolution(X, *sys.b, *sys.x);
+
+  if (sys.fes->GetParMesh()->GetMyRank() == 0) {
+    std::cout << "Solver converged in " << solver->GetNumIterations()
+              << " iterations, final residual = " << solver->GetFinalNorm()
+              << std::endl;
+  }
 }
 
-static void app_A(MPI_Comm comm, string mesh_file, string solver_type = "CG",
-                  string prec_type = "GS")
+static void app_A(MPI_Comm comm, string mesh_file, string solver_type,
+                  string prec_type)
 {
   int order = 1;
   // Initialize the FEA System
@@ -210,18 +253,22 @@ static void app_A(MPI_Comm comm, string mesh_file, string solver_type = "CG",
 
   do {
     SolveSystem(fem, solver_type, prec_type, 1e-8, 500, 0);
-    // Send from A to C
+
+    fem.x->Save("cube_step_1.sol");
+    // fem.x->SaveVTK(fem.mesh, "solution.vtk", "temperature", 1);
+    //  Send from A to C
     client.apps["client_A"]->SendPhase(
       [&]() { client.fields["client_A"]->Send(); });
     // Receive from C to A
     client.apps["client_A"]->ReceivePhase(
       [&]() { client.fields["client_A"]->Receive(); });
-    // sleep(10);
+
+    fem.x->Save("cube_step_5.sol");
   } while (!done);
 }
 
-static void app_B(MPI_Comm comm, string mesh_file, string solver_type = "CG",
-                  string prec_type = "GS")
+static void app_B(MPI_Comm comm, string mesh_file, string solver_type,
+                  string prec_type)
 {
   int order = 1;
 
@@ -240,41 +287,67 @@ static void app_B(MPI_Comm comm, string mesh_file, string solver_type = "CG",
     Init_Coupler(comm, coupler_name, app_name, field_name, false, {}, adapter);
 
   do {
-    SolveSystem(fem, solver_type, prec_type, 1e-8, 500, 0);
+    fem.x->Save("cube_step_3.sol");
     // Receive from C to B
     client.apps["client_B"]->ReceivePhase(
       [&]() { client.fields["client_B"]->Receive(); });
+
+    SolveSystem(fem, solver_type, prec_type, 1e-8, 500, 0);
+
+    fem.x->Save("cube_step_4.sol");
     // Send from B to C
     client.apps["client_B"]->SendPhase(
       [&]() { client.fields["client_B"]->Send(); });
     // sleep(10);
   } while (!done);
 }
+double calculate_rms(const Omega_h::Read<Omega_h::Real>& original_field,
+                     const Omega_h::Read<Omega_h::Real>& updated_field)
+{
+  const auto n = original_field.size();
+  if (n == 0)
+    return 0.0;
+
+  Omega_h::Write<Omega_h::Real> sq_diff(n);
+
+  Omega_h::parallel_for(
+    n, OMEGA_H_LAMBDA(Omega_h::LO i) {
+      const Omega_h::Real diff = updated_field[i] - original_field[i];
+      sq_diff[i] = diff * diff;
+    });
+
+  const double sum_sq = Omega_h::get_sum(Omega_h::Reals(sq_diff));
+  printf("RMS of (Orignal field - Updated field): %g\n", sum_sq);
+  return std::sqrt(sum_sq / static_cast<double>(n));
+}
 
 void coupler(MPI_Comm comm, std::string mesh_file)
 {
+  // Mesh init
   Omega_h::Library lib(nullptr, nullptr, comm);
   auto world = lib.world();
   Omega_h::Mesh mesh(&lib);
   Omega_h::binary::read(mesh_file, world, &mesh);
 
+  // fields init
   const auto nverts = mesh.nverts();
   Omega_h::Write<pcms::Real> init(nverts, 0.0); // init with zero
   mesh.add_tag<pcms::Real>(Omega_h::VERT, "temp", 1, init);
-  mesh.add_tag<pcms::Real>(Omega_h::VERT, "prev_temp", 1, init);
   auto isOwned = mesh.owned(0);
+
   // is_overlap is a vector of size mesh.nents(0) and is initialized to 1
   Omega_h::Write<Omega_h::I8> is_overlap(mesh.nents(0));
   Omega_h::parallel_for(
     is_overlap.size(), OMEGA_H_LAMBDA(int i) { is_overlap[i] = 1; });
-  printf("Size of mask:%d, size of mesh owned:%d\n", is_overlap.size(),
-         isOwned.size());
 
+  // Define Partition
   redev::LO dim = 3;
   redev::LOs ranks(1);
   std::iota(ranks.begin(), ranks.end(), 0);
   redev::Reals cuts = {0};
   auto partition = redev::Partition{redev::RCBPtn{dim, ranks, cuts}};
+
+  // Coupling labels
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_names = {"client_A", "client_B"};
   std::vector<string> field_names = {"temp", "temp"};
@@ -284,50 +357,28 @@ void coupler(MPI_Comm comm, std::string mesh_file)
     Init_Coupler(comm, coupler_name, app_names, field_names, true, partition,
                  OmegaHFieldAdapter<pcms::Real>("temp", mesh, is_overlap));
 
-  // Receive the init field
-  // server.apps["client_A"]->ReceivePhase([&]() {
-  // server.fields["client_A"]->Receive(); });
-  bool first_itr = true;
-  pcms::OmegaHField<pcms::Real> field_T("prev_temp", mesh); // field_Tn (empty)
   do {
-    auto field_C = mesh.get_array<pcms::Real>(0, "prev_temp");
+    auto field_C = Omega_h::deep_copy(mesh.get_array<pcms::Real>(0, "temp"));
 
     // Receive from A to C
     server.apps["client_A"]->ReceivePhase(
       [&]() { server.fields["client_A"]->Receive(); });
 
+    ts::writeVtk(mesh, "cube_step_", 2);
+
     // --- after update: read new field values (zero-copy)
     auto field_AC = mesh.get_array<pcms::Real>(0, "temp");
 
-    const auto n = field_C.size();
-    Omega_h::Write<pcms::Real> sq_diff(n);
+    double rms = calculate_rms(Omega_h::Reals(field_C),
+                               field_AC); // converting field_C to read<T>
 
-    // --- Compute squared difference on device
-    Omega_h::parallel_for(
-      n, OMEGA_H_LAMBDA(Omega_h::LO i) {
-        const pcms::Real diff = field_AC[i] - field_C[i];
-        sq_diff[i] = diff * diff;
-      });
-
-    // Global sum
-    double sum_sq = Omega_h::get_sum(Omega_h::Reals(
-      sq_diff)); // MPI_reduce not requried in the no partition case
-    double rms = std::sqrt(sum_sq / static_cast<double>(n));
-    printf(" RMS for the field difference (A-C):%d\n", rms);
+    // Send to App B
     server.apps["client_B"]->SendPhase(
       [&]() { server.fields["client_B"]->Send(); });
 
-    // Get the Coupler field
-    auto* adapter = server.fields["client_A"]
-                      ->GetFieldAdapter<pcms::OmegaHFieldAdapter<pcms::Real>>();
-    const auto& adapter_field = adapter->GetField(); // field_Tn+1
+    // Save state before receive from App B
+    field_C = Omega_h::deep_copy(field_AC);
 
-    // --- before update: deep copy of current field values
-    pcms::copy_field(adapter_field, field_T);
-    // sleep(20);
-
-    // From B to C to A
-    field_C = mesh.get_array<pcms::Real>(0, "prev_temp");
     // Receive from A to C
     server.apps["client_B"]->ReceivePhase(
       [&]() { server.fields["client_B"]->Receive(); });
@@ -335,30 +386,11 @@ void coupler(MPI_Comm comm, std::string mesh_file)
     // --- after update: read new field values (zero-copy)
     auto field_CB = mesh.get_array<pcms::Real>(0, "temp");
 
-    // --- Compute squared difference on device
-    Omega_h::parallel_for(
-      n, OMEGA_H_LAMBDA(Omega_h::LO i) {
-        const pcms::Real diff = field_AC[i] - field_C[i];
-        sq_diff[i] = diff * diff;
-      });
-
-    // Global sum
-    sum_sq = Omega_h::get_sum(Omega_h::Reals(
-      sq_diff)); // MPI_reduce not requried in the no partition case
-    rms = std::sqrt(sum_sq / static_cast<double>(n));
-    printf(" RMS for the field difference (B-C):%d\n", rms);
+    rms = calculate_rms(Omega_h::Reals(field_C),
+                        field_CB); // converting field_C to read<T>
 
     server.apps["client_A"]->SendPhase(
       [&]() { server.fields["client_A"]->Send(); });
-
-    // Get the Coupler field
-    auto* adapter_BC =
-      server.fields["client_A"]
-        ->GetFieldAdapter<pcms::OmegaHFieldAdapter<pcms::Real>>();
-    const auto& adapter_field_BC = adapter_BC->GetField(); // field_Tn+1
-
-    // --- before update: deep copy of current field values
-    pcms::copy_field(adapter_field_BC, field_T);
 
   } while (!done);
   std::cout << "The system converged\n";
@@ -385,8 +417,8 @@ int main(int argc, char* argv[])
 
   switch (clientId) {
     case -1: coupler(subcomm, meshFile); break;
-    case 0: app_A(subcomm, meshFile); break;
-    case 1: app_B(subcomm, meshFile); break;
+    case 0: app_A(subcomm, meshFile, argv[3], argv[4]); break;
+    case 1: app_B(subcomm, meshFile, argv[3], argv[4]); break;
     default:
       std::cerr << "Unhandled client id (should be -1, 0,1)\n";
       MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
