@@ -1,8 +1,11 @@
+project=/users/gangwh/src/mfem-pcms-example
+cd $project/build
 rm -rf *.bp
 echo "removed old bp files"
 echo "Running the test."
-totalview --args mpirun \
--np 1 ./build/convg_test 0  mesh/cube.msh Jacobi CG : \
--np 1 ./build/convg_test -1 mesh/cube.osh  : \
--np 1 ./build/convg_test 1  mesh/cube.msh Jacobi CG
+
+totalview --args \
+mpirun -np 1 ./convg_test 1  $project/mesh/cube.msh CG Jacobi & \
+mpirun -np 1 ./convg_test -1 $project/mesh/cube.osh  & \
+mpirun -np 1 ./convg_test 0  $project/mesh/cube.msh CG Jacobi
 

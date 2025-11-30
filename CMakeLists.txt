@@ -38,6 +38,9 @@ target_link_libraries(convg_test PUBLIC mfem pcms::pcms)
 add_executable(test_GDI test_GDI.cpp)
 target_link_libraries(test_GDI PUBLIC mfem pcms::pcms)
 
+add_executable(mfem_dd_solve DD_coupling.cpp)
+target_link_libraries(mfem_dd_solve PUBLIC mfem pcms::pcms)
+
 #add_executable(te_coupling thermo_elastic_coupling.cpp)
 #target_link_libraries(te_coupling PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
 

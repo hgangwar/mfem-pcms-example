@@ -48,13 +48,35 @@ using pcms::OmegaHFieldAdapter;
 using namespace mfem;
 using namespace std;
 namespace ts = test_support;
-
+static constexpr bool done = true;
 // Solve one thermal subproblem of the form:
 //   (kappa ∇T, ∇v) + beta (T, v) = (rhs_coeff, v)  with essential BCs on
 //   ess_bdr
 // rhs_coeff is typically beta * T_other_old
 
-static constexpr bool done = true;
+
+
+double calculate_rms(const Omega_h::Read<Omega_h::Real>& original_field,
+                     const Omega_h::Read<Omega_h::Real>& updated_field)
+{
+  const auto n = original_field.size();
+  if (n == 0)
+    return 0.0;
+
+  Omega_h::Write<Omega_h::Real> sq_diff(n);
+
+  Omega_h::parallel_for(
+    n, OMEGA_H_LAMBDA(Omega_h::LO i) {
+      const Omega_h::Real diff = updated_field[i] - original_field[i];
+      sq_diff[i] = diff * diff;
+    });
+
+  const double sum_sq = Omega_h::get_sum(Omega_h::Reals(sq_diff));
+  printf("RMS of (Original field - Updated field): %g\n", sum_sq);
+  return std::sqrt(sum_sq / static_cast<double>(n));
+}
+
+
 struct Coupling
 {
   std::string name;                                  // Coupler name
@@ -251,20 +273,41 @@ static void app_A(MPI_Comm comm, string mesh_file, string solver_type,
   auto client =
     Init_Coupler(comm, coupler_name, app_name, field_name, false, {}, adapter);
 
+  // Initialize global comm on the app
+  auto gdi = client.apps["client_A"]->Add_GDI<pcms::GO>("global_comm", comm);
+
+  GO flag = 1;
+  auto itr = 1;
   do {
+    auto curr_field = *fem.x;
     SolveSystem(fem, solver_type, prec_type, 1e-8, 500, 0);
-
     fem.x->Save("cube_step_1.sol");
-    // fem.x->SaveVTK(fem.mesh, "solution.vtk", "temperature", 1);
-    //  Send from A to C
-    client.apps["client_A"]->SendPhase(
-      [&]() { client.fields["client_A"]->Send(); });
-    // Receive from C to A
-    client.apps["client_A"]->ReceivePhase(
-      [&]() { client.fields["client_A"]->Receive(); });
+    auto update_field = *fem.x;
+    mfem::ParGridFunction diff(fem.fes);
+    diff = update_field.GetData() - curr_field.GetData();
+    auto residual = static_cast<int64_t>(diff.Norml2());
 
-    fem.x->Save("cube_step_5.sol");
-  } while (!done);
+    if ( itr >1 && flag == 0)
+      break;
+
+    //  Send from A to C
+    client.apps["client_A"]->BeginSendPhase();
+    client.fields["client_A"]->Send();
+    gdi->Send(&residual, "residual", 1);
+    printf("Sent flag=%d, residual=%d\n", flag, residual);
+    client.apps["client_A"]->EndSendPhase();
+
+    // Receive from C to A
+    client.apps["client_A"]->BeginReceivePhase();
+    flag = gdi->Receive( "flag", 1)[0];
+    printf("received flag=%d, residual=%d\n", flag, residual);
+    client.fields["client_A"]->Receive();
+    client.apps["client_A"]->EndReceivePhase();
+
+    itr++;
+
+    //fem.x->Save("cube_step_5.sol");
+  } while (flag);
 }
 
 static void app_B(MPI_Comm comm, string mesh_file, string solver_type,
@@ -281,45 +324,40 @@ static void app_B(MPI_Comm comm, string mesh_file, string solver_type,
 
   // Initialize the MFEM adapter
   auto adapter = MFEMFieldAdapter(app_name[0], *fem.pmesh, *fem.fes, *fem.x);
-
+  auto itr = 1;
+  auto flag = 1;
   // Initialize coupling interface
   auto client =
     Init_Coupler(comm, coupler_name, app_name, field_name, false, {}, adapter);
 
+  // Initialize global comm on the app
+  auto gdi = client.apps["client_B"]->Add_GDI<pcms::GO>("global_comm", comm);
+
   do {
     fem.x->Save("cube_step_3.sol");
     // Receive from C to B
-    client.apps["client_B"]->ReceivePhase(
-      [&]() { client.fields["client_B"]->Receive(); });
+    client.apps["client_B"]->BeginReceivePhase();
+    client.fields["client_B"]->Receive();
+    auto flag = gdi->Receive( "flag", 1)[0];
+    auto residual = gdi->Receive( "residual", 1)[0];
+    client.apps["client_B"]->EndReceivePhase();
 
+    if ( itr > 1 && flag == 0)
+      break;
     SolveSystem(fem, solver_type, prec_type, 1e-8, 500, 0);
 
-    fem.x->Save("cube_step_4.sol");
+    //fem.x->Save("cube_step_4.sol");
     // Send from B to C
-    client.apps["client_B"]->SendPhase(
-      [&]() { client.fields["client_B"]->Send(); });
-    // sleep(10);
-  } while (!done);
+    client.apps["client_B"]->BeginSendPhase();
+    client.fields["client_B"]->Send();
+    gdi->Send(&flag, "flag", 1);
+    gdi->Send(&residual, "residual", 1);
+    client.apps["client_B"]->EndSendPhase();
+    itr++;
+
+  } while (flag);
 }
-double calculate_rms(const Omega_h::Read<Omega_h::Real>& original_field,
-                     const Omega_h::Read<Omega_h::Real>& updated_field)
-{
-  const auto n = original_field.size();
-  if (n == 0)
-    return 0.0;
 
-  Omega_h::Write<Omega_h::Real> sq_diff(n);
-
-  Omega_h::parallel_for(
-    n, OMEGA_H_LAMBDA(Omega_h::LO i) {
-      const Omega_h::Real diff = updated_field[i] - original_field[i];
-      sq_diff[i] = diff * diff;
-    });
-
-  const double sum_sq = Omega_h::get_sum(Omega_h::Reals(sq_diff));
-  printf("RMS of (Orignal field - Updated field): %g\n", sum_sq);
-  return std::sqrt(sum_sq / static_cast<double>(n));
-}
 
 void coupler(MPI_Comm comm, std::string mesh_file)
 {
@@ -356,13 +394,18 @@ void coupler(MPI_Comm comm, std::string mesh_file)
   auto server =
     Init_Coupler(comm, coupler_name, app_names, field_names, true, partition,
                  OmegaHFieldAdapter<pcms::Real>("temp", mesh, is_overlap));
-
+  // Initialize global comm on the app
+  auto gdi = server.apps["client_A"]->Add_GDI<pcms::GO>("global_comm", comm);
   do {
     auto field_C = Omega_h::deep_copy(mesh.get_array<pcms::Real>(0, "temp"));
 
     // Receive from A to C
-    server.apps["client_A"]->ReceivePhase(
-      [&]() { server.fields["client_A"]->Receive(); });
+    server.apps["client_A"]->BeginReceivePhase();
+    server.fields["client_A"]->Receive();
+    auto flag = gdi->Receive( "flag", 1)[0];
+    auto residual = gdi->Receive( "residual", 1)[0];
+    printf("received flag=%d, residual=%d\n", flag, residual);
+    server.apps["client_A"]->EndReceivePhase();
 
     ts::writeVtk(mesh, "cube_step_", 2);
 
@@ -389,8 +432,11 @@ void coupler(MPI_Comm comm, std::string mesh_file)
     rms = calculate_rms(Omega_h::Reals(field_C),
                         field_CB); // converting field_C to read<T>
 
-    server.apps["client_A"]->SendPhase(
-      [&]() { server.fields["client_A"]->Send(); });
+    server.apps["client_A"]->BeginSendPhase();
+    server.fields["client_A"]->Send();
+    gdi->Send(&flag, "flag", 1);
+    gdi->Send(&residual, "residual", 1);
+    server.apps["client_A"]->EndSendPhase();
 
   } while (!done);
   std::cout << "The system converged\n";
@@ -402,28 +448,18 @@ int main(int argc, char* argv[])
   const auto clientId = atoi(argv[1]);
   REDEV_ALWAYS_ASSERT(clientId >= -1 && clientId <= 1);
   const auto meshFile = argv[2];
-  int color;
-  if (clientId == -1)
-    color = 0; // coupler
-  else if (clientId == 0)
-    color = 1; // client A
-  else if (clientId == 1)
-    color = 2; // client B
-  else
-    color = MPI_UNDEFINED;
 
-  MPI_Comm subcomm;
-  MPI_Comm_split(MPI_COMM_WORLD, color, 0, &subcomm);
-
-  switch (clientId) {
-    case -1: coupler(subcomm, meshFile); break;
-    case 0: app_A(subcomm, meshFile, argv[3], argv[4]); break;
-    case 1: app_B(subcomm, meshFile, argv[3], argv[4]); break;
-    default:
-      std::cerr << "Unhandled client id (should be -1, 0,1)\n";
-      MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+  MPI_Comm comm = MPI_COMM_WORLD;
+  {
+    switch (clientId) {
+      case -1: coupler(comm, meshFile); break;
+      case 0: app_A(comm, meshFile, argv[3], argv[4]); break;
+      case 1: app_B(comm, meshFile, argv[3], argv[4]); break;
+      default:
+        std::cerr << "Unhandled client id (should be -1, 0,1)\n";
+        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+    }
   }
-
   MPI_Finalize();
   return 0;
 }
