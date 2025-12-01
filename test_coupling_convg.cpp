@@ -113,13 +113,13 @@ Coupling Init_Coupler(MPI_Comm comm, const std::string& name,
   return cp;
 }
 
-
 static void app_A(MPI_Comm comm, string mesh_file, string solver_type,
                   string prec_type)
 {
   int order = 1;
   // Initialize the FEA System
-  mfem_support::FEMSystem fem = mfem_support::Init_FEMSystem(comm, mesh_file, order, 'A');
+  mfem_support::FEMSystem fem =
+    mfem_support::Init_FEMSystem(comm, mesh_file, order, 'A');
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_name = {"client_A"};
   std::vector<string> field_name = {"temp"};
@@ -139,16 +139,16 @@ static void app_A(MPI_Comm comm, string mesh_file, string solver_type,
   do {
 
     auto curr_field = *fem.x;
-    bool use_interior_bc = (itr != 1); //No need to apply internal BC for we don't have a soln yet
-    auto residual = mfem_support::SolveSystem(fem, solver_type,use_interior_bc, prec_type, 1e-8, 500, 0);
-    //fem.x->Save("cube_step_1.sol");
-
+    bool use_interior_bc =
+      (itr != 1); // No need to apply internal BC for we don't have a soln yet
+    auto residual = mfem_support::SolveSystem(fem, solver_type, use_interior_bc,
+                                              prec_type, 1e-8, 500, 0);
+    fem.x->Save("cube_step_1.sol");
 
     //  Send from A to C
     client.apps["client_A"]->BeginSendPhase();
     client.fields["client_A"]->Send();
     gdi->Send(&residual, "residual", 1);
-    printf("Sent residual from A=%g\n", residual);
     client.apps["client_A"]->EndSendPhase();
 
     // Receive from C to A
@@ -158,17 +158,16 @@ static void app_A(MPI_Comm comm, string mesh_file, string solver_type,
 
     // Step sync
     client.apps["client_A"]->BeginReceivePhase();
-    auto done  = gdi->Receive("done", 1)[0];
+    auto done = gdi->Receive("done", 1)[0];
 
-    while (!done){
+    while (!done) {
       sleep(1);
-      done  = gdi->Receive("flag", 1)[0];
+      done = gdi->Receive("flag", 1)[0];
     }
-    flag = gdi->Receive( "flag", 1)[0];
-    printf("received flag at A=%d\n", flag);
+    flag = gdi->Receive("flag", 1)[0];
     client.apps["client_A"]->EndReceivePhase();
     itr++;
-    //fem.x->Save("cube_step_5.sol");
+    fem.x->Save("cube_step_5.sol");
   } while (flag);
 }
 
@@ -178,7 +177,8 @@ static void app_B(MPI_Comm comm, string mesh_file, string solver_type,
   int order = 1;
 
   // Initialize the FEA System
-  mfem_support::FEMSystem fem = mfem_support::Init_FEMSystem(comm, mesh_file, order, 'B');
+  mfem_support::FEMSystem fem =
+    mfem_support::Init_FEMSystem(comm, mesh_file, order, 'B');
 
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_name = {"client_B"};
@@ -196,42 +196,37 @@ static void app_B(MPI_Comm comm, string mesh_file, string solver_type,
   auto gdi = client.apps["client_B"]->Add_GDI<pcms::GO>("global_comm", comm);
   GO residual = 0;
   do {
-    //fem.x->Save("cube_step_3.sol");
+    fem.x->Save("cube_step_3.sol");
     // Receive from C to B
     client.apps["client_B"]->BeginReceivePhase();
     client.fields["client_B"]->Receive();
-    //auto flag = gdi->Receive( "flag", 1)[0];
-    //auto residual = gdi->Receive( "residual", 1)[0];
     client.apps["client_B"]->EndReceivePhase();
-    //printf("received flag at B=%d\n", flag);
 
-    if ( itr > 1 && flag == 0)
+    if (itr > 1 && flag == 0)
       break;
-    auto residual = mfem_support::SolveSystem(fem, solver_type, true, prec_type, 1e-8, 500, 0);
+    auto residual = mfem_support::SolveSystem(fem, solver_type, true, prec_type,
+                                              1e-8, 500, 0);
 
-    //fem.x->Save("cube_step_4.sol");
     // Send from B to C
     client.apps["client_B"]->BeginSendPhase();
     client.fields["client_B"]->Send();
-    //gdi->Send(&flag, "flag", 1);
     gdi->Send(&residual, "residual", 1);
     client.apps["client_B"]->EndSendPhase();
 
     // Step sync
     client.apps["client_B"]->BeginReceivePhase();
-    auto done  = gdi->Receive("done", 1)[0];
-    while (!done){
+    auto done = gdi->Receive("done", 1)[0];
+    while (!done) {
       sleep(1);
-      done  = gdi->Receive("flag", 1)[0];
+      done = gdi->Receive("flag", 1)[0];
     }
-    flag = gdi->Receive( "flag", 1)[0];
+    flag = gdi->Receive("flag", 1)[0];
     printf("received flag at B=%d\n", flag);
     client.apps["client_B"]->EndReceivePhase();
     itr++;
 
   } while (flag);
 }
-
 
 void coupler(MPI_Comm comm, std::string mesh_file)
 {
@@ -268,13 +263,14 @@ void coupler(MPI_Comm comm, std::string mesh_file)
   auto server =
     Init_Coupler(comm, coupler_name, app_names, field_names, true, partition,
                  OmegaHFieldAdapter<pcms::Real>("temp", mesh, is_overlap));
+
   // Initialize global comm on the app
   auto gdi_A = server.apps["client_A"]->Add_GDI<pcms::GO>("global_comm", comm);
   auto gdi_B = server.apps["client_B"]->Add_GDI<pcms::GO>("global_comm", comm);
 
   GO flag = 1; // True to continue
   int itr = 1;
-  float tol = 1e-2;
+  float tol = 1e-3;
   GO done = 0;
   do {
     // start step
@@ -284,22 +280,20 @@ void coupler(MPI_Comm comm, std::string mesh_file)
     // Receive from A to C
     server.apps["client_A"]->BeginReceivePhase();
     server.fields["client_A"]->Receive();
-    //auto flag = gdi->Receive( "flag", 1)[0];
-    auto residual = gdi_A->Receive( "residual", 1)[0];
+    // auto flag = gdi->Receive( "flag", 1)[0];
+    auto residual = gdi_A->Receive("residual", 1)[0];
     printf("received residual at coupler from A=%g\n", residual);
     server.apps["client_A"]->EndReceivePhase();
 
-    //ts::writeVtk(mesh, "cube_step_", 2);
+    ts::writeVtk(mesh, "cube_step_", 2);
 
-    // --- after update: read new field values (zero-copy)
+    // --- after update: read new field values
     auto field_AC = mesh.get_array<pcms::Real>(0, "temp");
 
     auto rms = calculate_rms(Omega_h::Reals(field_C),
-                               field_AC); // converting field_C to read<T>
+                             field_AC); // converting field_C to read<T>
     printf("rms received at coupler:%f\n", rms);
     flag = (rms > tol);
-    //printf("sent flag %d, with rms %d coupler to B after itr %d.\n", flag, rms, itr);
-    //if (flag == 0) break;
 
     // Send to App B
     server.apps["client_B"]->BeginSendPhase();
@@ -314,39 +308,34 @@ void coupler(MPI_Comm comm, std::string mesh_file)
     // Receive from A to C
     server.apps["client_B"]->BeginReceivePhase();
     server.fields["client_B"]->Receive();
-    residual = gdi_B->Receive( "residual", 1)[0];
+    residual = gdi_B->Receive("residual", 1)[0];
     printf("received residual at coupler from B = %g\n", residual);
     server.apps["client_B"]->EndReceivePhase();
 
-    // --- after update: read new field values (zero-copy)
+    // --- after update: read new field values
     auto field_CB = mesh.get_array<pcms::Real>(0, "temp");
 
     rms = calculate_rms(Omega_h::Reals(field_C),
                         field_CB); // converting field_C to read<T>
     flag = (rms > tol);
-    //printf("rms received at coupler:%f\n", rms);
     server.apps["client_A"]->BeginSendPhase();
-    server.fields["client_A"]->Send();   // field send to A
+    server.fields["client_A"]->Send(); // field send to A
     server.apps["client_A"]->EndSendPhase();
 
-    // step end
+    // Inform A about the step end
     done = 1;
     server.apps["client_A"]->BeginSendPhase();
     gdi_A->Send(&flag, "flag", 1); // Inform A
     gdi_A->Send(&done, "done", 1);
     server.apps["client_A"]->EndSendPhase();
-
-    //Inform B about step end
+    // Inform B about the step end
     server.apps["client_B"]->BeginSendPhase();
     gdi_B->Send(&flag, "flag", 1);
     gdi_B->Send(&done, "done", 1);
     server.apps["client_B"]->EndSendPhase();
 
-    printf("sent flag %d, with rms %f coupler to A after itr = %d\n", flag, rms, itr);
-
-    //Step end
-
-
+    printf("sent flag %d, with rms %f coupler to A after itr = %d\n", flag, rms,
+           itr);
     itr++;
   } while (flag);
 
