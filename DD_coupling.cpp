@@ -62,10 +62,9 @@ void MarkInteriorPlaneDOFs(const Mesh &mesh,
 
 int main(int argc, char *argv[])
 {
-    Mesh mesh = Mesh::MakeCartesian3D(
-        12, 12, 12,
-        Element::HEXAHEDRON,
-        1.0, 1.0, 1.0);
+    std::string mesh_file = "$HOME/src/mfem-pcms-example/mesh/cube.msh";
+
+    Mesh mesh = new mfem::Mesh(mesh_file.c_str(), 1, 1, true);
 
     // Assign attributes region-wise
     AssignAttributesByX(mesh);
@@ -86,7 +85,8 @@ int main(int argc, char *argv[])
     int max_attr = mesh.attributes.Max();
     Array<int> attr_mask(max_attr);
     attr_mask = 0;
-    attr_mask[0] = 1;  // attribute 1 active
+    attr_mask[0] = 1;
+    attr_mask[1] = 1;// attribute 1 active
 
     // ------------------------------------------------------------
     // Bilinear form (masked)

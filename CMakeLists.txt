@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(mfem-cmake-example C CXX)
+project(pcms_mfem_coupling C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,18 +35,30 @@ target_link_libraries(coupler PUBLIC mfem pcms::pcms)
 add_executable(convg_test test_coupling_convg.cpp test_support.cpp)
 target_link_libraries(convg_test PUBLIC mfem pcms::pcms)
 
+add_executable(mfem_only_test test_mfem_only_coupling.cpp)
+target_link_libraries(mfem_only_test PUBLIC mfem pcms::pcms)
+
 add_executable(test_GDI test_GDI.cpp)
 target_link_libraries(test_GDI PUBLIC mfem pcms::pcms)
 
 add_executable(mfem_dd_solve DD_coupling.cpp)
 target_link_libraries(mfem_dd_solve PUBLIC mfem pcms::pcms)
 
+add_executable(baseline baseline.cpp)
+target_link_libraries(baseline PUBLIC mfem)
+
+add_executable(msh2osh read.cpp)
+target_link_libraries(msh2osh PUBLIC mfem pcms::pcms Omega_h::omega_h )
+
+
 #add_executable(te_coupling thermo_elastic_coupling.cpp)
 #target_link_libraries(te_coupling PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
 
 add_executable(tt_coupling thermo_thermo_coupling.cpp)
-target_link_libraries(tt_coupling PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
+target_link_libraries(tt_coupling PUBLIC mfem pcms::pcms)
 
+add_executable(verify verify.cpp)
+target_link_libraries(verify PUBLIC mfem pcms::pcms)
 # add this to enable testing
 enable_testing()
 

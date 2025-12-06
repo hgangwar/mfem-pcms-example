@@ -73,77 +73,88 @@ void MarkInteriorPlaneDOFs(const mfem::ParMesh& pmesh,
   pfes.GetEssentialTrueDofs(vdof_marker, ess_tdofs);
 }
 
-//--------------------------------------------
-// 1. Initialization (Mesh + FE + BilinearForm)
-//--------------------------------------------
-FEMSystem Init_FEMSystem(MPI_Comm comm, const std::string& mesh_file, int order,
-                         const char client)
+FEMSystem Init_FEMSystem(MPI_Comm comm, const std::string& mesh_file,
+                         int order, const char client)
 {
-  FEMSystem sys;
+    FEMSystem sys;
 
-  sys.mesh = new mfem::Mesh(mesh_file.c_str(), 1, 1, true);
-  sys.pmesh = new mfem::ParMesh(comm, *sys.mesh);
+    // Load and parallelize mesh
+    sys.mesh  = new mfem::Mesh(mesh_file.c_str(), 1, 1, true);
+    sys.pmesh = new mfem::ParMesh(comm, *sys.mesh);
+    int dim   = sys.pmesh->Dimension();
 
-  int dim = sys.pmesh->Dimension();
+    // Assign element attributes (1,2,3 based on x location)
+    AssignAttributesByX(*sys.pmesh);
 
-  // ---------------------------
-  // Assign element attributes
-  // ---------------------------
-  AssignAttributesByX(*sys.pmesh);
+    // Attribute mask based on client
+    const int max_attr = sys.pmesh->attributes.Max();
+    mfem::Array<int> attr_mask(max_attr);
+    attr_mask = 0;
 
-  // ---------------------------
-  // Build attr_mask based on client type
-  // (element attributes 1,2,3 from AssignAttributesByX)
-  // ---------------------------
-  const int max_attr = sys.pmesh->attributes.Max(); // should be 3
-  mfem::Array<int> attr_mask(max_attr);
-  attr_mask = 0;
+    switch (client) {
+        case 'A': attr_mask[0] = 1; attr_mask[1] = 1; break;  // 1 & 2
+        case 'B': attr_mask[1] = 1; attr_mask[2] = 1; break;  // 2 & 3
+        case 'M': attr_mask = 1; break;                       // 1,2,3
+        default: throw std::invalid_argument("Unknown client type");
+    }
 
-  switch (client) {
-    case 'A':
-      // client A: region 1 + overlap (1,2)
-      attr_mask[0] = 1; // attribute 1
-      attr_mask[1] = 1; // attribute 2
-      break;
-    case 'B':
-      // client B: overlap + region 3 (2,3)
-      attr_mask[1] = 1; // attribute 2
-      attr_mask[2] = 1; // attribute 3
-      break;
-    default: throw std::invalid_argument("Unknown client type");
-  }
+    // -----------------------
+    // Boundary conditions
+    // -----------------------
+    sys.ess_bdr.SetSize(sys.pmesh->bdr_attributes.Max());
+    sys.ess_bdr = 0;
 
-  // ---------------------------
-  // Boundary attribute mask for external Dirichlet BCs
-  // ---------------------------
-  sys.ess_bdr.SetSize(sys.pmesh->bdr_attributes.Max());
-  sys.ess_bdr = 0;
-  for (int k = 0; k < sys.ess_bdr.Size(); k++)
-    sys.ess_bdr[k] = 1;
+    int left_attr  = 1;  // must match Mesh bdr attributes
+    int right_attr = 2;
 
-  // FE space
-  sys.fec = new mfem::H1_FECollection(order, dim);
-  sys.fes = new mfem::ParFiniteElementSpace(sys.pmesh, sys.fec);
+    sys.ess_bdr[left_attr - 1]  = 1;
+    sys.ess_bdr[right_attr - 1] = 1;
 
-  // Bilinear form (domain restricted by attr_mask)
-  sys.a = new mfem::ParBilinearForm(sys.fes);
-  mfem::ConstantCoefficient kappa(130.0);
-  sys.a->AddDomainIntegrator(new mfem::DiffusionIntegrator(kappa), attr_mask);
-  sys.a->Assemble();
-  sys.a->Finalize();
+    // FE space
+    sys.fec = new mfem::H1_FECollection(order, dim);
+    sys.fes = new mfem::ParFiniteElementSpace(sys.pmesh, sys.fec);
 
-  // Linear form (same attr_mask)
-  mfem::ConstantCoefficient f(100.0);
-  sys.b = new mfem::ParLinearForm(sys.fes);
-  sys.rhs_int = new mfem::DomainLFIntegrator(f);
-  sys.b->AddDomainIntegrator(sys.rhs_int, attr_mask);
-  sys.b->Assemble();
+    // ------------------------
+    // Bilinear form (diffusion)
+    // ------------------------
+    sys.a = new mfem::ParBilinearForm(sys.fes);
+    mfem::ConstantCoefficient kappa(130.0);
+    sys.a->AddDomainIntegrator(new mfem::DiffusionIntegrator(kappa), attr_mask);
+    sys.a->Assemble();
 
-  // Solution
-  sys.x = new mfem::ParGridFunction(sys.fes);
-  *sys.x = 0.0;
+    // ------------------------
+    // Load vector: Gaussian
+    // ------------------------
+    class GaussianSRC : public mfem::Coefficient {
+        double cx, cy, cz;
+    public:
+        GaussianSRC() : cx(0.5), cy(0.5), cz(0.5) {}
+        virtual double Eval(mfem::ElementTransformation &T,
+                            const mfem::IntegrationPoint &ip)
+        {
+            mfem::Vector x;
+            T.Transform(ip, x);
+            double dx = x[0] - cx;
+            double dy = x[1] - cy;
+            double dz = x[2] - cz;
+            return 100.0 * exp(-200.0 * (dx*dx + dy*dy + dz*dz));
+        }
+    };
 
-  return sys;
+    GaussianSRC gsrc;
+
+    sys.b = new mfem::ParLinearForm(sys.fes);
+    sys.rhs_int = new mfem::DomainLFIntegrator(gsrc);
+    sys.b->AddDomainIntegrator(sys.rhs_int, attr_mask);
+    sys.b->Assemble();
+
+    // ------------------------
+    // Solution vector
+    // ------------------------
+    sys.x = new mfem::ParGridFunction(sys.fes);
+    *sys.x = 0.0;
+
+    return sys;
 }
 
 //--------------------------------------------
@@ -151,71 +162,122 @@ FEMSystem Init_FEMSystem(MPI_Comm comm, const std::string& mesh_file, int order,
 //--------------------------------------------
 long SolveSystem(FEMSystem& sys, const std::string& solver_type,
                  bool use_interior_bc, const std::string& prec_type,
-                 double rel_tol = 1e-8, int max_iter = 500, int print_level = 5)
+                 double rel_tol, int max_iter, int print_level)
 {
-  // Boundary essential DOFs from boundary attributes
+  // --------------------------------------------------
+  // 1) Collect essential true DOFs from boundary attrs
+  //    (these are driven by sys.ess_bdr set in Init_FEMSystem)
+  // --------------------------------------------------
   mfem::Array<int> bd_tdofs;
   sys.fes->GetEssentialTrueDofs(sys.ess_bdr, bd_tdofs);
 
-  // Interior DOFs on x = 0.5
+  // --------------------------------------------------
+  // 2) Optionally add interior DOFs (e.g. x = 0.5 plane)
+  // --------------------------------------------------
   mfem::Array<int> active_ess_dofs;
 
-  if (use_interior_bc) {
+  if (use_interior_bc)
+  {
     mfem::Array<int> interior_tdofs;
+    // This should fill interior_tdofs with *true dof* indices
     MarkInteriorPlaneDOFs(*sys.pmesh, *sys.fes, interior_tdofs);
-    // union: boundary + interior
+
     active_ess_dofs = bd_tdofs;
     active_ess_dofs.Append(interior_tdofs);
-    active_ess_dofs.Sort(); // optional: sort + dedup
-  } else {
+    active_ess_dofs.Sort();
+    active_ess_dofs.Unique();  // IMPORTANT: eliminate duplicates
+  }
+  else
+  {
     active_ess_dofs = bd_tdofs;
   }
 
-  // 3) Form the parallel linear system A X = B
-  mfem::OperatorPtr A; // Owned smart pointer
-  mfem::HypreParVector X, B;
+  // Sanity check: if we have no essential dofs at all, the system
+  // may be singular for a pure Neumann problem with nonzero load.
+  if (active_ess_dofs.Size() == 0)
+  {
+    if (sys.fes->GetParMesh()->GetMyRank() == 0)
+      std::cerr << "[SolveSystem] WARNING: No essential DOFs; "
+                   "system may be singular for this load.\n";
+  }
+
+  // --------------------------------------------------
+  // 3) Make sure current solution respects homogeneous BCs
+  //    (we assume zero Dirichlet; Init_FEMSystem set *sys.x = 0.0 already)
+  //    But we enforce zero again on active essential DOFs just to be safe.
+  // --------------------------------------------------
+  for (int i = 0; i < active_ess_dofs.Size(); i++)
+  {
+    (*sys.x)(active_ess_dofs[i]) = 0.0;
+  }
+
+  // --------------------------------------------------
+  // 4) Form the parallel linear system A X = B with BCs
+  // --------------------------------------------------
+  mfem::OperatorPtr A;      // owns the operator
+  mfem::HypreParVector X;   // solution in true-dof space
+  mfem::HypreParVector B;   // RHS in true-dof space
+
   long residual = -1;
+
+  // This enforces essential BCs encoded in active_ess_dofs and sys.x
+  // and modifies A, X, B accordingly.
   sys.a->FormLinearSystem(active_ess_dofs, *sys.x, *sys.b, A, X, B);
 
-  // Extract actual Hypre matrix pointer for Hypre-based preconditioners
-  auto* A_hypre = A.As<mfem::HypreParMatrix>();
+  // Extract actual Hypre matrix for Hypre-based preconditioners
+  auto *A_hypre = A.As<mfem::HypreParMatrix>();
   MFEM_VERIFY(A_hypre, "FormLinearSystem did not produce a HypreParMatrix.");
 
   // --------------------------------------------------
-  // Select preconditioner (Hypre-only)
+  // 5) Build preconditioner
   // --------------------------------------------------
   std::unique_ptr<mfem::Solver> prec;
 
-  if (prec_type == "HypreAMG") {
+  if (prec_type == "HypreAMG")
+  {
     auto amg = std::make_unique<mfem::HypreBoomerAMG>(*A_hypre);
     prec = std::move(amg);
-  } else if (prec_type == "Jacobi") {
+  }
+  else if (prec_type == "Jacobi")
+  {
     auto hs = std::make_unique<mfem::HypreSmoother>(*A_hypre);
     hs->SetType(mfem::HypreSmoother::Jacobi);
     prec = std::move(hs);
-  } else {
+  }
+  else
+  {
     if (sys.fes->GetParMesh()->GetMyRank() == 0)
-      std::cerr << "Unknown preconditioner: " << prec_type << std::endl;
+      std::cerr << "[SolveSystem] Unknown preconditioner: "
+                << prec_type << std::endl;
     return residual;
   }
 
   // --------------------------------------------------
-  // Choose parallel iterative solver
+  // 6) Choose iterative solver
   // --------------------------------------------------
   std::unique_ptr<mfem::IterativeSolver> solver;
   MPI_Comm comm = sys.fes->GetParMesh()->GetComm();
 
   if (solver_type == "CG")
+  {
     solver = std::make_unique<mfem::CGSolver>(comm);
+  }
   else if (solver_type == "MINRES")
+  {
     solver = std::make_unique<mfem::MINRESSolver>(comm);
+  }
   else if (solver_type == "GMRES")
+  {
     solver = std::make_unique<mfem::GMRESSolver>(comm);
-  else {
+  }
+  else
+  {
     if (sys.fes->GetParMesh()->GetMyRank() == 0)
-      std::cerr << "Unknown solver: " << solver_type << std::endl;
+      std::cerr << "[SolveSystem] Unknown solver: "
+                << solver_type << std::endl;
     return residual;
   }
+
   solver->SetOperator(*A);
   solver->SetPreconditioner(*prec);
   solver->SetRelTol(rel_tol);
@@ -224,23 +286,36 @@ long SolveSystem(FEMSystem& sys, const std::string& solver_type,
   solver->SetPrintLevel(print_level);
 
   // --------------------------------------------------
-  // Solve system
+  // 7) Solve system
   // --------------------------------------------------
   solver->Mult(B, X);
 
+  // If something went wrong (e.g. singular system), norm may be NaN/inf
+  double final_norm = solver->GetFinalNorm();
+  if (!(final_norm == final_norm) || !std::isfinite(final_norm))  // NaN or inf
+  {
+    if (sys.fes->GetParMesh()->GetMyRank() == 0)
+      std::cerr << "[SolveSystem] WARNING: solver produced non-finite residual "
+                << "(likely singular system / bad BCs).\n";
+  }
+
   // --------------------------------------------------
-  // Recover finite element solution
+  // 8) Recover FE solution from true-dof solution
   // --------------------------------------------------
   sys.a->RecoverFEMSolution(X, *sys.b, *sys.x);
 
-  if (sys.fes->GetParMesh()->GetMyRank() == 0) {
+  if (sys.fes->GetParMesh()->GetMyRank() == 0)
+  {
     std::cout << "Solver converged in " << solver->GetNumIterations()
-              << " iterations, final residual = " << solver->GetFinalNorm()
+              << " iterations, final residual = " << final_norm
               << std::endl;
   }
-  residual = solver->GetFinalNorm();
+
+  residual = final_norm;
   return residual;
 }
+
+
 
 } // namespace mfem_support
 #endif
