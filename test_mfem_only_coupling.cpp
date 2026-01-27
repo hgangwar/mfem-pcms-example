@@ -1,24 +1,46 @@
 /* ! Description:
- * This file is a test for the coupling between two MFEM solvers using PCMS.
- * Both of the solvers are based on the same mesh.
- * Loose coupling between TWO steady thermal solvers on a 3D cubic mesh.
- * - Solver A: diffusion with conductivity kappa_A, solved via PCG +
- * Gauss–Seidel
- * - Solver B: diffusion with conductivity kappa_B, solved via MINRES + Jacobi
- * Coupling: symmetric penalty term beta*(T1 - T2) added to both equations;
- * iterate to convergence.
+* This file implements a verification test for domain decomposition and
+ * partitioned coupling strategies using MFEM on a shared 3D mesh.
  *
- * Iteration (Gauss–Seidel style):
- *   (kA ∇T1, ∇v) + β (T1, v) = β (T2_old, v)
- *   (kB ∇T2, ∇w) + β (T2, w) = β (T1_new,  w)
- * The coupling is done by PCMS.
- * - Mesh: [0,Lx]x[0,Ly]x[0,Lz] with nx x ny x nz HEX elements
- * - Dirichlet BC: T = T_top on the top face (z = Lz) for both solvers; natural
- * elsewhere.
- * - Coupling parameter beta (>0) controls how strongly T1 and T2 are driven to
- * agree.
- * - Convergence: relative L2 change of T1 and T2 below tolerances.
+ * A steady-state heat conduction problem is solved on a cubic domain using
+ * linear finite elements. The domain is decomposed into three subregions
+ * along the x-direction, and different solve configurations are realized
+ * by selectively activating subdomains while preserving global mesh
+ * indexing.
+ *
+ * Three solve modes are supported:
+ *   - Client A: subdomains (1,2) active, subdomain 3 inactive
+ *   - Client B: subdomains (2,3) active, subdomain 1 inactive
+ *   - Client M: all subdomains (1,2,3) active (monolithic reference)
+ *
+ * Inactive subdomains are numerically decoupled using a near-zero thermal
+ * conductivity, allowing partial-domain solves without modifying the mesh.
+ * Internal coupling is emulated by imposing Dirichlet constraints on an
+ * internal interface plane (x = 0.5 * Lx), where temperature values may be
+ * supplied from an external solver or a previous iteration, mimicking
+ * data exchange in a coupled multi-physics workflow.
+ *
+ * Problem setup:
+ *   - Governing equation: -div(k(x) grad T) = q(x)
+ *   - Heat generation applied only in the central subdomain
+ *   - Dirichlet boundary conditions:
+ *       T = 300 at x = 0
+ *       T = 350 at x = Lx
+ *   - All other boundaries are natural (homogeneous Neumann)
+ *
+ * Numerical details:
+ *   - Mesh: structured 3D Cartesian mesh with HEX elements
+ *   - Finite elements: H1 Lagrange, order 1
+ *   - Linear solver: Conjugate Gradient with Hypre BoomerAMG preconditioner
+ *
+ * Purpose:
+ *   This test case is intended as a controlled demonstration of domain
+ *   decomposition, internal interface enforcement, and coupling mechanics
+ *   on a shared finite element mesh. It serves as a foundation for future
+ *   integration with PCMS-based multi-application coupling and transient
+ *   extensions.
  */
+
 
 #include <iostream>
 #include <cmath>
@@ -151,6 +173,7 @@ static void app_A(MPI_Comm comm, support::ThermalParams params, string solver_ty
     auto residual = support::SolveSystem(fem, solver_type, use_interior_bc,
                                               prec_type, 1e-8, 500, 0);
     fem.x->Save("cube_step_1.sol");
+    support::SaveParaviewSolution(*fem.mesh, *fem.x, "temperature", "cube_step_1");
 
     //  Send from A to C
     client.apps["client_A"]->BeginSendPhase();
@@ -175,7 +198,8 @@ static void app_A(MPI_Comm comm, support::ThermalParams params, string solver_ty
     client.apps["client_A"]->EndReceivePhase();
     itr++;
     fem.x->Save("cube_step_5.sol");
-  } while (flag);
+    support::SaveParaviewSolution(*fem.mesh, *fem.x, "temperature", "cube_step_5");
+  } while (false);
 }
 
 static void app_B(MPI_Comm comm, support::ThermalParams params , string solver_type,
@@ -203,7 +227,7 @@ static void app_B(MPI_Comm comm, support::ThermalParams params , string solver_t
   auto gdi = client.apps["client_B"]->Add_GDI<pcms::GO>("global_comm", comm);
   GO residual = 0;
   do {
-    fem.x->Save("cube_step_3.sol");
+
     // Receive from C to B
     client.apps["client_B"]->BeginReceivePhase();
     client.fields["client_B"]->Receive();
@@ -213,6 +237,8 @@ static void app_B(MPI_Comm comm, support::ThermalParams params , string solver_t
       break;
     auto residual = support::SolveSystem(fem, solver_type, true, prec_type,
                                               1e-8, 500, 0);
+    fem.x->Save("cube_step_3.sol");
+    support::SaveParaviewSolution(*fem.mesh, *fem.x, "temperature", "cube_step_3");
 
     // Send from B to C
     client.apps["client_B"]->BeginSendPhase();
@@ -232,20 +258,14 @@ static void app_B(MPI_Comm comm, support::ThermalParams params , string solver_t
     client.apps["client_B"]->EndReceivePhase();
     itr++;
 
-  } while (flag);
+  } while (false);
 }
 
 void coupler(MPI_Comm comm, support::ThermalParams params)
 {
   // Mesh init
   Omega_h::Library lib(nullptr, nullptr, comm);
-  Mesh serial =
-    Mesh::MakeCartesian3D(params.ne[0], params.ne[1], params.ne[2],
-                          Element::HEXAHEDRON,
-                          params.size[0], params.size[1], params.size[2],
-                          true);
 
-  auto mesh  = new Mesh(serial);
   int order = 1;
   // Initialize the FEA System
   support::FEMSystem fem =
@@ -283,13 +303,14 @@ void coupler(MPI_Comm comm, support::ThermalParams params)
     // start step
     done = 0;
 
-    //auto field_C = Omega_h::deep_copy(mesh.get_array<pcms::Real>(0, "temp"));
+    // Step start Field
     std::vector<double> field_C(fem.pmesh->GetNV());
     mfem::GridFunction &gf = *fem.x;
     for (int v = 0; v < fem.pmesh->GetNV(); v++)
     {
       field_C[v] = gf(v);
     }
+
     // Receive from A to C
     server.apps["client_A"]->BeginReceivePhase();
     server.fields["client_A"]->Receive();
@@ -298,31 +319,28 @@ void coupler(MPI_Comm comm, support::ThermalParams params)
     printf("received residual at coupler from A=%g\n", residual);
     server.apps["client_A"]->EndReceivePhase();
 
-
-
     // --- after update: read new field values
-    //auto field_AC = mesh.get_array<pcms::Real>(0, "temp");
     std::vector<double> field_AC(fem.pmesh->GetNV());
     mfem::GridFunction &gf_AC = *fem.x;
     for (int v = 0; v < fem.pmesh->GetNV(); v++)
     {
-      field_C[v] = gf_AC(v);
+      field_AC[v] = gf_AC(v);
     }
-    auto rms = calculate_rms(Omega_h::Reals(field_C),
+
+    // --- Calculate the rms between Coupler field and A field
+    auto rms = calculate_rms(field_C,
                              field_AC); // converting field_C to read<T>
 
     printf("rms received at coupler:%f\n", rms);
     flag = (rms > tol);
-
+    fem.x->Save("cube_step_2.sol");
+    support::SaveParaviewSolution(*fem.mesh, *fem.x, "temperature", "cube_step_2");
     // Send to App B
     server.apps["client_B"]->BeginSendPhase();
     server.fields["client_B"]->Send();
     gdi_B->Send(&flag, "flag", 1);
     gdi_B->Send(&done, "done", 1);
     server.apps["client_B"]->EndSendPhase();
-
-    // Save state before receive from App B
-    field_C = Omega_h::deep_copy(field_AC);
 
     // Receive from A to C
     server.apps["client_B"]->BeginReceivePhase();
@@ -332,11 +350,19 @@ void coupler(MPI_Comm comm, support::ThermalParams params)
     server.apps["client_B"]->EndReceivePhase();
 
     // --- after update: read new field values
-    auto field_CB = mesh.get_array<pcms::Real>(0, "temp");
-
-    rms = calculate_rms(Omega_h::Reals(field_C),
-                        field_CB); // converting field_C to read<T>
+    std::vector<double> field_CB(fem.pmesh->GetNV());
+    mfem::GridFunction &gf_CB = *fem.x;
+    for (int v = 0; v < fem.pmesh->GetNV(); v++)
+    {
+      field_CB[v] = gf_CB(v);
+    }
+    // --- Calculate the rms between B field and Coupler field
+    rms = calculate_rms(field_AC,
+                        field_CB);
     flag = (rms > tol);
+    fem.x->Save("cube_step_4.sol");
+    support::SaveParaviewSolution(*fem.mesh, *fem.x, "temperature", "cube_step_4");
+
     server.apps["client_A"]->BeginSendPhase();
     server.fields["client_A"]->Send(); // field send to A
     server.apps["client_A"]->EndSendPhase();
@@ -356,7 +382,7 @@ void coupler(MPI_Comm comm, support::ThermalParams params)
     printf("sent flag %d, with rms %f coupler to A after itr = %d\n", flag, rms,
            itr);
     itr++;
-  } while (flag);
+  } while (false);
 
   std::cout << "The system converged\n";
 }

@@ -41,19 +41,6 @@ target_link_libraries(mfem_only_test PUBLIC mfem pcms::pcms)
 add_executable(test_GDI test_GDI.cpp)
 target_link_libraries(test_GDI PUBLIC mfem pcms::pcms)
 
-add_executable(mfem_dd_solve DD_coupling.cpp)
-target_link_libraries(mfem_dd_solve PUBLIC mfem pcms::pcms)
-
-add_executable(baseline baseline.cpp)
-target_link_libraries(baseline PUBLIC mfem)
-
-add_executable(msh2osh read.cpp)
-target_link_libraries(msh2osh PUBLIC mfem pcms::pcms Omega_h::omega_h )
-
-
-#add_executable(te_coupling thermo_elastic_coupling.cpp)
-#target_link_libraries(te_coupling PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
-
 add_executable(tt_coupling thermo_thermo_coupling.cpp)
 target_link_libraries(tt_coupling PUBLIC mfem pcms::pcms)
 
