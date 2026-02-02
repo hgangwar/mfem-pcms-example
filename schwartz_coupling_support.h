@@ -1,0 +1,11 @@
+//
+// Created by gangwh on 2/2/26.
+//
+
+#ifndef PCMS_MFEM_COUPLING_SCHWARTZ_COUPLING_SUPPORT_H
+#define PCMS_MFEM_COUPLING_SCHWARTZ_COUPLING_SUPPORT_H
+
+class schwartz_coupling_support
+{};
+
+#endif // PCMS_MFEM_COUPLING_SCHWARTZ_COUPLING_SUPPORT_H

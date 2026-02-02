@@ -35,9 +35,6 @@ target_link_libraries(coupler PUBLIC mfem pcms::pcms)
 add_executable(convg_test test_coupling_convg.cpp test_support.cpp)
 target_link_libraries(convg_test PUBLIC mfem pcms::pcms)
 
-add_executable(mfem_only_test test_mfem_only_coupling.cpp)
-target_link_libraries(mfem_only_test PUBLIC mfem pcms::pcms)
-
 add_executable(test_GDI test_GDI.cpp)
 target_link_libraries(test_GDI PUBLIC mfem pcms::pcms)
 
@@ -46,6 +43,13 @@ target_link_libraries(tt_coupling PUBLIC mfem pcms::pcms)
 
 add_executable(verify verify.cpp)
 target_link_libraries(verify PUBLIC mfem pcms::pcms)
+
+add_executable(mfem_solve mfem_solve.cpp)
+target_link_libraries(mfem_solve PUBLIC mfem)
+
+add_executable(schwartz_coupling schwartz_coupling.cpp)
+target_link_libraries(schwartz_coupling PUBLIC mfem)
+
 # add this to enable testing
 enable_testing()
 
