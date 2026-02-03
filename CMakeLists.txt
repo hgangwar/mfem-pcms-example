@@ -47,8 +47,8 @@ target_link_libraries(verify PUBLIC mfem pcms::pcms)
 add_executable(mfem_solve mfem_solve.cpp)
 target_link_libraries(mfem_solve PUBLIC mfem)
 
-add_executable(schwartz_coupling schwartz_coupling.cpp)
-target_link_libraries(schwartz_coupling PUBLIC mfem)
+add_executable(schwarz_coupling schwarz_coupling.cpp)
+target_link_libraries(schwarz_coupling PUBLIC mfem)
 
 # add this to enable testing
 enable_testing()
