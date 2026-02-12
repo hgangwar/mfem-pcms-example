@@ -38,11 +38,15 @@ target_link_libraries(convg_test PUBLIC mfem pcms::pcms)
 add_executable(test_GDI test_GDI.cpp)
 target_link_libraries(test_GDI PUBLIC mfem pcms::pcms)
 
-add_executable(tt_coupling thermo_thermo_coupling.cpp)
-target_link_libraries(tt_coupling PUBLIC mfem pcms::pcms)
 
-add_executable(verify verify.cpp)
-target_link_libraries(verify PUBLIC mfem pcms::pcms)
+add_executable(compare_mem_mesh compare_mem_mesh.cpp)
+target_link_libraries(compare_mem_mesh PUBLIC mfem pcms::pcms)
+
+add_executable(compare_serial_mesh compare_serial_mesh.cpp)
+target_link_libraries(compare_serial_mesh PUBLIC mfem pcms::pcms)
+
+add_executable(write_osh write_osh.cpp)
+target_link_libraries(write_osh PUBLIC mfem pcms::pcms)
 
 add_executable(mfem_solve mfem_solve.cpp)
 target_link_libraries(mfem_solve PUBLIC mfem)
@@ -50,6 +54,8 @@ target_link_libraries(mfem_solve PUBLIC mfem)
 add_executable(schwarz_coupling schwarz_coupling.cpp)
 target_link_libraries(schwarz_coupling PUBLIC mfem)
 
+add_executable(thermo_coupling thermo_coupling.cpp)
+target_link_libraries(thermo_coupling PUBLIC mfem pcms::pcms)
 # add this to enable testing
 enable_testing()
 

@@ -12,9 +12,27 @@
 #include <algorithm>
 #include <map>
 #include <iomanip>
+#include <iostream>
+#include <cmath>
+#include <mpi.h>
+#include "mfem.hpp"
+#include "mfem_field_adapter.h"
+
+
+#include <pcms/pcms.h>
+#include <pcms/omega_h_field.h>
+#include "pcms/create_field.h" // Updated Omega_h field
+#include <pcms/transfer_field2.h> // Field transfer methods
+
+#include <Omega_h_build.hpp>
+#include <Omega_h_library.hpp>
+#include <Omega_h_mesh.hpp>
+#include <Omega_h_file.hpp>
+#include <Omega_h_vtk.hpp>
 
 using namespace mfem;
-
+namespace support
+{
 // -----------------------------
 // FEMSystem
 // -----------------------------
@@ -30,11 +48,27 @@ struct FEMSystem
 
   Array<int> ess_tdofs; // essential TRUE dofs for elimination
 };
+// -----------------------------
+// System Parameters
+// -----------------------------
+struct ThermalParams
+{
+  std::array<double,3> size;      // lx, ly, lz
+  std::array<int,3>    ne;        // nx, ny, nz
+  double q_total;                 // total heat [W]
+  double kappa;                   // thermal conductivity
+  double rho;                     // density
+  double cp;                      // heat capacity (unused here, steady)
+  double h_flux;                  // peak heat transfer coefficient for flux BC (used in FunctionCoefficient)
+  double h_conv;                  // convection coefficient
+  double T_conv;                  // ambient temperature for convection BC
+  double T_dirichlet;             // Dirichlet boundary temperature
+};
 
 // -----------------------------
 // Build FE system: -div(k grad T)=0
 // -----------------------------
-static FEMSystem InitThermalSystem(ParMesh *pmesh, int order, double kappa_val)
+static FEMSystem Init_FEMSystem(ParMesh *pmesh, int order, double kappa_val)
 {
   FEMSystem sys;
   sys.pmesh = pmesh;
@@ -64,7 +98,7 @@ static FEMSystem InitThermalSystem(ParMesh *pmesh, int order, double kappa_val)
 // -----------------------------
 // SolveSystem
 // -----------------------------
-static double SolveSystem(FEMSystem &sys,
+static long SolveSystem(FEMSystem &sys,
                           const std::string &solver_type,
                           const std::string &prec_type,
                           double rel_tol,
@@ -127,6 +161,7 @@ public:
     return 270.0 + 30.0 * x[0];
   }
 };
+
 // -----------------------------
 // Utilities
 // -----------------------------
@@ -142,39 +177,214 @@ static double DefaultTolX(const Mesh &mesh)
   const double Lx = xmax - xmin;
   return std::max(1e-12, 1e-10 * (std::abs(Lx) + 1.0));
 }
+// Shift Mesh along x axis
+void shift_meshX(Omega_h::Mesh& mesh, double dx)
+{
+  auto coords_A  = Omega_h::Read <Omega_h::Real>(mesh.coords());
+  auto coords_B = Omega_h::Write<Omega_h::Real>(mesh.coords().size());
+  const auto nverts = mesh.nverts();
+  const auto dim = mesh.dim();
+  OMEGA_H_CHECK(coords_A.size() == dim * nverts);
+  Omega_h::parallel_for(
+      nverts, OMEGA_H_LAMBDA(const Omega_h::LO vert_id) {
+        coords_B[vert_id*dim + 0] = coords_A[vert_id * dim] +  dx;
+  });
+  mesh.set_coords(coords_B);
+}
+struct Coupling
+{
+  std::string name;                                  // Coupler name
+  std::unique_ptr<pcms::Coupler> cpl;                // Coupler instance
+  std::vector<std::string> app_names;                // Attached apps
+  std::vector<std::string> field_names;              // Attached fields
+  std::map<std::string, pcms::Application*> apps;    // App_name -> pointer
+  std::map<std::string, pcms::CoupledField*> fields; // App_field -> pointer
+  bool isServer = false;
+};
+double RMSDiff(const std::vector<std::pair<double,double>> &a,
+                      const std::vector<std::pair<double,double>> &b)
+{
+  MFEM_VERIFY(a.size() == b.size(), "Trace sizes differ.");
+  double s = 0.0;
+  for (size_t i = 0; i < a.size(); i++)
+  {
+    MFEM_VERIFY(std::abs(a[i].first - b[i].first) < 1e-10, "Trace y-grids differ.");
+    const double d = a[i].second - b[i].second;
+    s += d*d;
+  }
+  return std::sqrt(s / std::max<size_t>(1, a.size()));
+}
+double ComputeRMS(const Omega_h::Read<double>& a,
+                  const Omega_h::Read<double>& b)
+{
+  const int n = a.size();
+
+  if (b.size() != n)
+    throw std::runtime_error("ComputeRMS: size mismatch");
+
+  if (n == 0)
+    return 0.0;
+
+  // Copy to host
+  Omega_h::HostRead<double> ha(a);
+  Omega_h::HostRead<double> hb(b);
+
+  double sum_sq = 0.0;
+
+  for (int i = 0; i < n; ++i)
+  {
+    double diff = ha[i] - hb[i];
+    sum_sq += diff * diff;
+  }
+
+  return std::sqrt(sum_sq / static_cast<double>(n));
+}
+
+//--------------------------------------------------------------
+// Init_Coupler<TAdapter>
+//--------------------------------------------------------------
+template <typename Adapter_type>
+Coupling Init_Coupler(MPI_Comm comm, const std::string& name,
+                      const std::vector<std::string>& app_names,
+                      const std::vector<std::string>& field_names,
+                      bool isServer, const redev::Partition ptn,
+                      Adapter_type Adapter)
+{
+  Coupling cp;
+  cp.name = name;
+  cp.app_names = app_names;
+  cp.field_names = field_names;
+  cp.isServer = isServer;
+
+  if (app_names.size() != field_names.size())
+    throw std::runtime_error(
+      "Mismatch: app_names and field_names must be of the same size.");
+  if (isServer)
+    cp.cpl = std::make_unique<pcms::Coupler>(name, comm, isServer, ptn);
+  else
+    cp.cpl = std::make_unique<pcms::Coupler>(name, comm, isServer, ptn);
+
+  for (size_t i = 0; i < app_names.size(); ++i) {
+    auto* app = cp.cpl->AddApplication(app_names[i]);
+    cp.fields[app_names[i]] = app->AddField(field_names[i], Adapter);
+    cp.apps[app_names[i]] = app;
+  }
+  return cp;
+}
 // Extract sorted-by-y vertex samples on x=xline.
-static std::vector<std::pair<double,double>>
-ExtractVertexLineTrace(const ParMesh &pmesh, const ParGridFunction &T,
+// Extract sorted-by-y vertex samples on x = xline from an Omega_h vertex scalar field.
+// Assumes `field_v` is vertex-associated: field_v.size() == mesh.nverts().
+static std::vector<std::pair<double, double>>
+ExtractVertexLineTrace(const Omega_h::Mesh& mesh,
+                       Omega_h::Read<Omega_h::Real> field_v,
                        double xline, double tol)
 {
-  std::vector<std::pair<double,double>> trace;
-  trace.reserve(pmesh.GetNV());
+  std::vector<std::pair<double, double>> trace;
+  trace.reserve(static_cast<std::size_t>(mesh.nverts()));
 
-  for (int vi = 0; vi < pmesh.GetNV(); vi++)
+  // Vertex coordinates: coords is (nverts * dim) Reals in interleaved layout.
+  auto const coords = mesh.coords();
+  int const dim = mesh.dim();
+  OMEGA_H_CHECK(dim >= 2);
+
+  for (int vi = 0; vi < mesh.nverts(); ++vi)
   {
-    const double *v = pmesh.GetVertex(vi);
-    if (std::abs(v[0] - xline) <= tol)
+    double const x = coords[vi * dim + 0];
+    double const y = coords[vi * dim + 1];
+
+    if (std::abs(x - xline) <= tol)
     {
-      trace.emplace_back(v[1], T(vi));
+      // field_v[vi] is the vertex scalar value.
+      trace.emplace_back(y, static_cast<double>(field_v[vi]));
     }
   }
 
   std::sort(trace.begin(), trace.end(),
-            [](auto &a, auto &b){ return a.first < b.first; });
+            [](auto const& a, auto const& b) { return a.first < b.first; });
 
-  // dedup by y
-  std::vector<std::pair<double,double>> uniq;
+  // Dedup by y (same logic as your MFEM version)
+  std::vector<std::pair<double, double>> uniq;
   uniq.reserve(trace.size());
-  for (auto &p : trace)
+  for (auto const& p : trace)
   {
-    if (uniq.empty() || std::abs(p.first - uniq.back().first) > 10*tol)
+    if (uniq.empty() || std::abs(p.first - uniq.back().first) > 10 * tol)
       uniq.push_back(p);
     else
-      uniq.back().second = p.second;
+      uniq.back().second = p.second; // overwrite (last wins)
   }
   return uniq;
 }
+// Apply BC condition on Omega_h mesh based on vertex coords
+// trace: vector of (y_coord, dof_value)
+// mesh:  Omega_h mesh with a vertex tag `tag_name` (default "temp")
+// x_line: x coordinate of the line
+// x_tol:  tolerance to decide if a vertex is on the line
+// y_tol:  tolerance used to match vertex y to a trace y sample (binning)
+void FillTagOnXLineFromTrace(
+    Omega_h::Mesh& mesh,
+    const std::vector<std::pair<double,double>>& trace,
+    double x_line,
+    double tol,
+    const char* tag_name = "temp")
+{
+  if (trace.empty()) return;
+  if (tol <= 0.0) throw std::runtime_error("y_tol must be > 0");
 
+  // Must be a vertex tag (dim = 0)
+  if (!mesh.has_tag(0, tag_name)) {
+    throw std::runtime_error(std::string("Mesh missing vertex tag: ") + tag_name);
+  }
+
+  const int dim = mesh.dim();
+  if (dim < 1) throw std::runtime_error("Mesh dim invalid");
+
+  const int nverts = mesh.nverts();
+  if (nverts == 0) return;
+
+  // Build a y->value lookup via binning
+  // key = round(y / y_tol)
+  std::unordered_map<long long, double> ybin_to_val;
+  ybin_to_val.reserve(trace.size() * 2);
+
+  auto ykey = [&](double y) -> long long {
+    return llround(y / tol);
+  };
+
+  for (const auto& p : trace) {
+    ybin_to_val[ykey(p.first)] = p.second;
+  }
+
+  // Read coordinates on host
+  Omega_h::HostRead<Omega_h::Real> hcoords(mesh.coords()); // size = nverts * dim
+
+  // Read existing tag (host) and create a writable device array
+  Omega_h::Reals temp_in = mesh.get_array<Omega_h::Real>(0, tag_name);
+  Omega_h::HostRead<Omega_h::Real> htemp_in(temp_in);
+
+  Omega_h::Write<Omega_h::Real> temp_out_w(nverts);
+  Omega_h::HostWrite<Omega_h::Real> htemp_out(temp_out_w);
+
+  // Start with old values, then overwrite those on x_line
+  for (int v = 0; v < nverts; ++v) {
+    htemp_out[v] = htemp_in[v];
+  }
+
+  // Overwrite along x = x_line
+  for (int v = 0; v < nverts; ++v) {
+    const double x = hcoords[v * dim + 0];
+    if (std::abs(x - x_line) > tol) continue;
+
+    const double y = (dim > 1) ? hcoords[v * dim + 1] : 0.0;
+    const auto it = ybin_to_val.find(ykey(y));
+    if (it != ybin_to_val.end()) {
+      htemp_out[v] = it->second;
+    }
+    // else: no matching trace sample for this y-bin; leave existing value
+  }
+
+  // Push back onto the mesh (in-place update of the tag)
+  mesh.set_tag(0, tag_name, Omega_h::Reals(temp_out_w));
+}
 // Apply a y->value trace to boundary attribute bdr_attr by setting boundary vertices (order=1).
 static void ApplyBoundaryTraceByAttr(ParMesh &pmesh, ParGridFunction &gf,
                                      int bdr_attr,
@@ -275,20 +485,6 @@ static void ReportTraceStats(const std::vector<std::pair<double,double>> &tr,
             << " (range=" << (vmax - vmin) << ")\n";
 }
 
-static double RMSDiff(const std::vector<std::pair<double,double>> &a,
-                      const std::vector<std::pair<double,double>> &b)
-{
-  MFEM_VERIFY(a.size() == b.size(), "Trace sizes differ.");
-  double s = 0.0;
-  for (size_t i = 0; i < a.size(); i++)
-  {
-    MFEM_VERIFY(std::abs(a[i].first - b[i].first) < 1e-10, "Trace y-grids differ.");
-    const double d = a[i].second - b[i].second;
-    s += d*d;
-  }
-  return std::sqrt(s / std::max<size_t>(1, a.size()));
-}
-
 // -----------------------------
 // To help register ParaView fields
 // -----------------------------
@@ -308,5 +504,39 @@ struct OutputPack
     pvd.SetHighOrderOutput(true);
   }
 };
+
+static std::vector<std::pair<double,double>>
+RelaxTrace(const std::vector<std::pair<double,double>> &old_t,
+           const std::vector<std::pair<double,double>> &new_t,
+           double omega)
+{
+  MFEM_VERIFY(old_t.size() == new_t.size(), "Trace sizes differ.");
+  std::vector<std::pair<double,double>> out = new_t;
+  for (size_t i = 0; i < out.size(); i++)
+  {
+    out[i].second = omega*new_t[i].second + (1.0-omega)*old_t[i].second;
+  }
+  return out;
+}
+static void SaveFields(OutputPack& out, const FEMSystem& sys, int it)
+{
+  ExactTempCoeff exact;
+
+  // update exact
+  out.exact.ProjectCoefficient(exact);
+
+  // update error = T - T_exact
+  out.err = *sys.x;
+  out.err -= out.exact;
+
+  // time-series metadata
+  out.pvd.SetCycle(it);
+  out.pvd.SetTime((double)it);
+
+  // write
+  out.pvd.Save();
+}
+
+}
 
 #endif // PCMS_MFEM_COUPLING_SCHWARTZ_COUPLING_SUPPORT_H
