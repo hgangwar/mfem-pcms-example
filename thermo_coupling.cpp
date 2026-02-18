@@ -1,6 +1,5 @@
-
-
 #include "schwartz_coupling_support.h"
+
 using pcms::Copy;
 using pcms::GO;
 using pcms::Lagrange;

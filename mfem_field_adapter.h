@@ -1,13 +1,13 @@
 #ifndef PCMS_COUPLING_MFEM_FIELD_ADAPTER_H
 #define PCMS_COUPLING_MFEM_FIELD_ADAPTER_H
-#include <pcms/types.h>
-#include <pcms/memory_spaces.h>
+#include <pcms/utility/types.h>
+#include <pcms/utility/memory_spaces.h>
 #include <pcms/field.h>
 #include <vector>
 #include <redev_variant_tools.h>
-#include <pcms/assert.h>
-#include <pcms/array_mask.h>
-#include <pcms/profile.h>
+#include <pcms/utility/assert.h>
+#include <pcms/utility/array_mask.h>
+#include <pcms/utility/profile.h>
 #include <pcms/partition.h>
 #include "mfem.hpp"
 

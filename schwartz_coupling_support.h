@@ -18,12 +18,14 @@
 #include "mfem.hpp"
 #include "mfem_field_adapter.h"
 
-
 #include <pcms/pcms.h>
-#include <pcms/omega_h_field.h>
-#include "pcms/create_field.h" // Updated Omega_h field
+#include <pcms/create_field.h> // Updated Omega_h field
 #include <pcms/transfer_field2.h> // Field transfer methods
 
+/*
+#include <pcms/omega_h_field.h>
+#include <pcms/coupler.h>
+*/
 #include <Omega_h_build.hpp>
 #include <Omega_h_library.hpp>
 #include <Omega_h_mesh.hpp>
