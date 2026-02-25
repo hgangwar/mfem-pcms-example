@@ -9,62 +9,23 @@ using pcms::OmegaHFieldAdapter;
 
 using namespace std;
 
-OMEGA_H_DEVICE Omega_h::I8 isModelEntInOverlap(const int dim, const int id)
-{
-  // the TOMMS generated geometric model has
-  // entity IDs that increase with the distance
-  // from the magnetic axis
-  if (dim == 2 && (id >= 22 && id <= 34)) {
-    return 1;
-  } else if (dim == 1 && (id >= 21 && id <= 34)) {
-    return 1;
-  } else if (dim == 0 && (id >= 21 && id <= 34)) {
-    return 1;
-  }
-  return 0;
-}
-
-/**
- * Create the tag 'isOverlap' for each mesh vertex whose value is 1 if the
- * vertex is classified on a model entity in the closure of the geometric model
- * faces forming the overlap region; the value is 0 otherwise.
- */
-Omega_h::Read<Omega_h::I8> markOverlapMeshEntities(Omega_h::Mesh& mesh)
-{
-  // transfer vtx classification to host
-  auto classIds = mesh.get_array<Omega_h::ClassId>(0, "class_id");
-  auto classDims = mesh.get_array<Omega_h::I8>(0, "class_dim");
-  auto isOverlap = Omega_h::Write<Omega_h::I8>(classIds.size(), "isOverlap");
-  auto markOverlap = OMEGA_H_LAMBDA(int i)
-  {
-    isOverlap[i] = isModelEntInOverlap(classDims[i], classIds[i]);
-  };
-  Omega_h::parallel_for(classIds.size(), markOverlap);
-  auto isOverlap_r = Omega_h::read(isOverlap);
-  mesh.add_tag(0, "isOverlap", 1, isOverlap_r);
-  return isOverlap_r;
-}
-Omega_h::HostRead<Omega_h::I8> markMeshOverlapRegion(Omega_h::Mesh& mesh)
-{
-  auto isOverlap = markOverlapMeshEntities(mesh);
-  return Omega_h::HostRead(isOverlap);
-}
-static void app_A(MPI_Comm comm, support::ThermalParams params, string solver_type,
+static void app_A(MPI_Comm comm, const std::string mesh_file, support::ThermalParams params, string solver_type,
                   string prec_type)
 {
   // Order of fes assumed
   int order = 1;
 
   // ΩA: [0,0.6]x[0,1]
-  mfem::Mesh mesh("/users/gangwh/src/mfem-pcms-example/mesh/box_tri.msh", 1, 1);
+  mfem::Mesh mesh(mesh_file, 1, 1);
   ParMesh pmesh(comm, mesh);
 
   // States
   double T_left = 270.0;
   double left_bdr_x = 1;
   double right_bdr_x = 3;
+
   // Estimate tolerance for the mesh
-  const double tol= support::DefaultTolX(pmesh);
+  // const double tol= support::DefaultTolX(pmesh);
 
   // Initialize the FEA System
   support::FEMSystem fem =
@@ -135,13 +96,13 @@ static void app_A(MPI_Comm comm, support::ThermalParams params, string solver_ty
 
 }
 
-static void app_B(MPI_Comm comm, support::ThermalParams params , string solver_type,
+static void app_B(MPI_Comm comm, const std::string mesh_file, support::ThermalParams params , string solver_type,
                   string prec_type)
 {
   // Order of fes assumed
   int order = 1;
   // ΩB: [0.4,1]x[0,1] (build [0,0.6] then shift by +0.4)
-  mfem::Mesh mesh("/users/gangwh/src/mfem-pcms-example/mesh/box_tri.msh", 1, 1);
+  mfem::Mesh mesh(mesh_file, 1, 1);
   for (int i = 0; i < mesh.GetNV(); i++) { mesh.GetVertex(i)[0] += 0.4; }
   ParMesh pmesh(comm, mesh);
 
@@ -225,11 +186,11 @@ static void app_B(MPI_Comm comm, support::ThermalParams params , string solver_t
 
   } while (flag);
 }
-void coupler(MPI_Comm comm){
+void coupler(MPI_Comm comm, const std::string mesh_file){
   // Mesh init
   Omega_h::Library lib(nullptr, nullptr, comm);
   auto world = lib.world();
-  auto mesh_file = "/users/gangwh/src/mfem-pcms-example/mesh/box_tri.osh";
+
   // Read Mesh for App A
   Omega_h::Mesh mesh_A(&lib);
   Omega_h::binary::read(mesh_file, world, &mesh_A);
@@ -241,10 +202,11 @@ void coupler(MPI_Comm comm){
   Omega_h::Mesh mesh_B = mesh_A;
   double dx = 0.4;
   support::shift_meshX(mesh_B, dx);
-
-  Omega_h::Write<pcms::Real> init(nverts, 280); // init with random guess
-  mesh_A.add_tag<pcms::Real>(Omega_h::VERT, "temp", 1, init);
-  mesh_B.add_tag<pcms::Real>(Omega_h::VERT, "temp", 1, init);
+  GO random_temp = 280;
+  Omega_h::Read<GO> init(nverts, random_temp); // init with random guess
+  auto global_id_name = std::string("temp");
+  mesh_A.add_tag<GO>(Omega_h::VERT, global_id_name, 1, init);
+  mesh_B.add_tag<GO>(Omega_h::VERT, global_id_name, 1, init);
   auto isOwned = mesh_A.owned(0);
 
   // is_overlap is a vector of size mesh.nents(0) and is initialized to 1
@@ -261,15 +223,15 @@ void coupler(MPI_Comm comm){
   // Coupling labels
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_names = {"client_A", "client_B"};
-  std::vector<string> field_names = {"temp", "temp"};
+  std::vector<string> field_names = {global_id_name, global_id_name};
 
   // Initialize coupling interface
   auto server_A =
     support::Init_Coupler(comm, coupler_name, app_names, field_names, true, partition,
-                 OmegaHFieldAdapter<pcms::Real>("temp", mesh_A, is_overlap));
+                 OmegaHFieldAdapter<GO>("temp", mesh_A, is_overlap));
   auto server_B =
     support::Init_Coupler(comm, coupler_name, app_names, field_names, true, partition,
-               OmegaHFieldAdapter<pcms::Real>("temp", mesh_B, is_overlap));
+               OmegaHFieldAdapter<GO>("temp", mesh_B, is_overlap));
 
   // Initialize global comm on the app
   auto gdi_A = server_A.apps["client_A"]->Add_GDI<pcms::GO>("global_comm", comm);
@@ -279,20 +241,23 @@ void coupler(MPI_Comm comm){
   int itr = 1;
   float tol = 1e-3;
   GO done = 0;
+  pcms::Real fill_value = 0.0;
 
   // Setup layouts and  field pointers
-  //auto layout_A = pcms::CreateLagrangeLayout(mesh_A, 1, 1, pcms::CoordinateSystem::Cartesian);
-  //auto field_A = layout_A->CreateField();
+  auto layout_A = pcms::CreateLagrangeLayout(mesh_A, 1, 1, pcms::CoordinateSystem::Cartesian, "global");
+  auto field_A = layout_A->CreateField();
+  field_A->SetOutOfBoundsMode(pcms::OutOfBoundsMode::FILL, fill_value);
 
-  //auto layout_B = pcms::CreateLagrangeLayout(mesh_B, 1, 1, pcms::CoordinateSystem::Cartesian);
-  //auto field_B = layout_B->CreateField();
+  auto layout_B = pcms::CreateLagrangeLayout(mesh_B, 1, 1, pcms::CoordinateSystem::Cartesian, "global");
+  auto field_B = layout_B->CreateField();
+  field_B->SetOutOfBoundsMode(pcms::OutOfBoundsMode::FILL, fill_value);
 
   double w = 1.0;  //Schwarz coupling relaxation
   do {
     // start step
     done = 0;
 
-    auto dof_C = Omega_h::deep_copy(mesh_A.get_array<pcms::Real>(0, "temp"));
+    auto dof_C = Omega_h::deep_copy(mesh_A.get_array<GO>(0, "temp"));
 
     // Receive from A to C
     server_A.apps["client_A"]->BeginReceivePhase();
@@ -300,26 +265,18 @@ void coupler(MPI_Comm comm){
     auto residual = gdi_A->Receive("residual", 1)[0];
     printf("received residual at coupler from A=%g\n", residual);
     server_A.apps["client_A"]->EndReceivePhase();
+
     //init the field
-    auto dof_A = mesh_A.get_array<pcms::Real>(0, "temp");
+    auto dof_A = mesh_A.get_array<GO>(0, "temp");
 
     // --- after update: read new field values
-    auto rms = support::ComputeRMS(Omega_h::Reals(dof_C),
+    auto rms = support::ComputeRMS(Omega_h::Read<GO>(dof_C),
                              dof_A);
     printf("rms received at coupler:%f\n", rms);
     flag = (rms > tol);
 
-    // Setup gB to be sent to B
-    // Extract BC from mesh_A (App A <-> Coupler) to mesh_B (Coupler <-> App_B) gB_new = TB at x=0.6
-    auto dof_B = mesh_B.get_array<pcms::Real>(0, "temp");
-    auto gB_new = support::ExtractVertexLineTrace(mesh_A, dof_A, 0.6, tol);
-    auto gB_exist = support::ExtractVertexLineTrace(mesh_B, dof_B, 0.6, tol);
-
-    // Relax/update gB
-    auto gB_relaxed = support::RelaxTrace(gB_exist, gB_new, w);
-
-    // Apply BC to mesh_B by vertex coords
-    support::FillTagOnXLineFromTrace(mesh_B, gB_relaxed, 0.6, tol, "temp");
+    // Interpolate from A to B (source A, target B)
+    pcms::interpolate_field2(*field_A, *field_B);
 
     // Send to App B
     server_B.apps["client_B"]->BeginSendPhase();
@@ -334,22 +291,13 @@ void coupler(MPI_Comm comm){
     residual = gdi_B->Receive("residual", 1)[0];
     printf("received residual at coupler from B = %g\n", residual);
     server_B.apps["client_B"]->EndReceivePhase();
-    dof_A = mesh_A.get_array<pcms::Real>(0, "temp");
 
-    // Extract BC from mesh_B (Coupler <-> App_B) to mesh_A (App A <-> Coupler)
-    dof_B = mesh_B.get_array<pcms::Real>(0, "temp");
-    auto gA_new = support::ExtractVertexLineTrace(mesh_B, dof_B, 0.6, tol);
-    auto gA_exist = support::ExtractVertexLineTrace(mesh_A, dof_A, 0.6, tol);
-
-    // Relax/update gB
-    const auto gA_relaxed = support::RelaxTrace(gA_exist, gA_new, w);
+    // Interpolate from A to B (source B, target A)
+    pcms::interpolate_field2(*field_B, *field_A);
 
     // --- after update: read new field values
-    rms = support::ComputeRMS(Omega_h::Reals(dof_C),
+    rms = support::ComputeRMS(Omega_h::Read<GO>(dof_C),
                              dof_A);
-
-    // Apply BC to mesh_A by vertex coords
-    support::FillTagOnXLineFromTrace(mesh_A, gA_relaxed, 0.6, tol, "temp");
 
     // Send to App A
     server_A.apps["client_A"]->BeginSendPhase();
@@ -403,9 +351,9 @@ int main(int argc, char* argv[])
   MPI_Comm comm = MPI_COMM_WORLD;
   {
     switch (clientId) {
-      case -1: coupler(comm); break;
-      case 0: app_A(comm, params, argv[3], argv[4]); break;
-      case 1: app_B(comm, params, argv[3], argv[4]); break;
+      case -1: coupler(comm ,meshFile); break;
+      case 0: app_A(comm, meshFile, params, argv[3], argv[4]); break;
+      case 1: app_B(comm, meshFile, params, argv[3], argv[4]); break;
       default:
         std::cerr << "Unhandled client id (should be -1, 0,1)\n";
         MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);

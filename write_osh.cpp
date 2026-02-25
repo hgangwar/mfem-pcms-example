@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
     // Same geometry as MFEM MakeCartesian2D(nx,ny,TRIANGLE,true,0.6,1.0)
     Omega_h::Mesh mesh = Omega_h::build_box(
       lib.world(),
-      OMEGA_H_SIMPLEX, // triangles
+      OMEGA_H_SIMPLEX,
       0.6, 1.0, 0.0,
       nx,  ny,  0
     );

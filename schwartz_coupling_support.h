@@ -216,8 +216,8 @@ double RMSDiff(const std::vector<std::pair<double,double>> &a,
   }
   return std::sqrt(s / std::max<size_t>(1, a.size()));
 }
-double ComputeRMS(const Omega_h::Read<double>& a,
-                  const Omega_h::Read<double>& b)
+long ComputeRMS(const Omega_h::Read<long>& a,
+                  const Omega_h::Read<long>& b)
 {
   const int n = a.size();
 
@@ -228,8 +228,8 @@ double ComputeRMS(const Omega_h::Read<double>& a,
     return 0.0;
 
   // Copy to host
-  Omega_h::HostRead<double> ha(a);
-  Omega_h::HostRead<double> hb(b);
+  Omega_h::HostRead<long> ha(a);
+  Omega_h::HostRead<long> hb(b);
 
   double sum_sq = 0.0;
 
@@ -239,7 +239,7 @@ double ComputeRMS(const Omega_h::Read<double>& a,
     sum_sq += diff * diff;
   }
 
-  return std::sqrt(sum_sq / static_cast<double>(n));
+  return std::sqrt(sum_sq / static_cast<long>(n));
 }
 
 //--------------------------------------------------------------
@@ -261,10 +261,8 @@ Coupling Init_Coupler(MPI_Comm comm, const std::string& name,
   if (app_names.size() != field_names.size())
     throw std::runtime_error(
       "Mismatch: app_names and field_names must be of the same size.");
-  if (isServer)
-    cp.cpl = std::make_unique<pcms::Coupler>(name, comm, isServer, ptn);
-  else
-    cp.cpl = std::make_unique<pcms::Coupler>(name, comm, isServer, ptn);
+
+  cp.cpl = std::make_unique<pcms::Coupler>(name, comm, isServer, ptn);
 
   for (size_t i = 0; i < app_names.size(); ++i) {
     auto* app = cp.cpl->AddApplication(app_names[i]);
@@ -537,6 +535,46 @@ static void SaveFields(OutputPack& out, const FEMSystem& sys, int it)
 
   // write
   out.pvd.Save();
+}
+OMEGA_H_DEVICE Omega_h::I8 isModelEntInOverlap(const int dim, const int id)
+{
+  // the TOMMS generated geometric model has
+  // entity IDs that increase with the distance
+  // from the magnetic axis
+  if (dim == 2 && (id >= 22 && id <= 34)) {
+    return 1;
+  } else if (dim == 1 && (id >= 21 && id <= 34)) {
+    return 1;
+  } else if (dim == 0 && (id >= 21 && id <= 34)) {
+    return 1;
+  }
+  return 0;
+}
+
+/**
+ * Create the tag 'isOverlap' for each mesh vertex whose value is 1 if the
+ * vertex is classified on a model entity in the closure of the geometric model
+ * faces forming the overlap region; the value is 0 otherwise.
+ */
+Omega_h::Read<Omega_h::I8> markOverlapMeshEntities(Omega_h::Mesh& mesh)
+{
+  // transfer vtx classification to host
+  auto classIds = mesh.get_array<Omega_h::ClassId>(0, "class_id");
+  auto classDims = mesh.get_array<Omega_h::I8>(0, "class_dim");
+  auto isOverlap = Omega_h::Write<Omega_h::I8>(classIds.size(), "isOverlap");
+  auto markOverlap = OMEGA_H_LAMBDA(int i)
+  {
+    isOverlap[i] = isModelEntInOverlap(classDims[i], classIds[i]);
+  };
+  Omega_h::parallel_for(classIds.size(), markOverlap);
+  auto isOverlap_r = Omega_h::read(isOverlap);
+  mesh.add_tag(0, "isOverlap", 1, isOverlap_r);
+  return isOverlap_r;
+}
+Omega_h::HostRead<Omega_h::I8> markMeshOverlapRegion(Omega_h::Mesh& mesh)
+{
+  auto isOverlap = markOverlapMeshEntities(mesh);
+  return Omega_h::HostRead(isOverlap);
 }
 
 }

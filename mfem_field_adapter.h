@@ -151,9 +151,12 @@ namespace pcms
     pcms::LO dim = pmesh_.Dimension();
     pmesh_.GetVertices(vcoords);
     int local_index=0;
+    std::array<double, 3> coord;
     // we need to create a counter for local index
-    for (auto i = 0; i < vcoords.Size(); i+=3) { // class ids will be replaced with the node points
-      std::array<double,3> coord{vcoords[i], vcoords[i+1], vcoords[i+2]};
+    for (auto i = 0; i < vcoords.Size(); i+=dim) { // class ids will be replaced with the node points
+      //std::array<double,3> coord{vcoords[i], vcoords[i+1], vcoords[i+2]};
+      std::copy(vcoords.begin() + i, vcoords.begin() + i + dim, coord.begin());
+
       auto dr = partition.GetDr(local_index, dim, coord);
       reverse_partition[dr].emplace_back(local_index++); // it should be some counter since it is going 3 at a time
     }     
