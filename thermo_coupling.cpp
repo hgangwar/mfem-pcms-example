@@ -9,6 +9,8 @@ using pcms::OmegaHFieldAdapter;
 
 using namespace std;
 
+
+
 static void app_A(MPI_Comm comm, const std::string mesh_file, support::ThermalParams params, string solver_type,
                   string prec_type)
 {
@@ -202,11 +204,11 @@ void coupler(MPI_Comm comm, const std::string mesh_file){
   Omega_h::Mesh mesh_B = mesh_A;
   double dx = 0.4;
   support::shift_meshX(mesh_B, dx);
-  GO random_temp = 280;
-  Omega_h::Read<GO> init(nverts, random_temp); // init with random guess
-  auto global_id_name = std::string("temp");
-  mesh_A.add_tag<GO>(Omega_h::VERT, global_id_name, 1, init);
-  mesh_B.add_tag<GO>(Omega_h::VERT, global_id_name, 1, init);
+  dtype random_temp = 280;
+  Omega_h::Read<dtype> init(nverts, random_temp); // init with random guess
+  auto field_name = std::string("temp");
+  mesh_A.add_tag<dtype>(Omega_h::VERT, field_name, 1, init);
+  mesh_B.add_tag<dtype>(Omega_h::VERT, field_name, 1, init);
   auto isOwned = mesh_A.owned(0);
 
   // is_overlap is a vector of size mesh.nents(0) and is initialized to 1
@@ -223,15 +225,15 @@ void coupler(MPI_Comm comm, const std::string mesh_file){
   // Coupling labels
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_names = {"client_A", "client_B"};
-  std::vector<string> field_names = {global_id_name, global_id_name};
+  std::vector<string> field_names = {field_name, field_name};
 
   // Initialize coupling interface
   auto server_A =
     support::Init_Coupler(comm, coupler_name, app_names, field_names, true, partition,
-                 OmegaHFieldAdapter<GO>("temp", mesh_A, is_overlap));
+                 OmegaHFieldAdapter<dtype>(field_name, mesh_A, is_overlap));
   auto server_B =
     support::Init_Coupler(comm, coupler_name, app_names, field_names, true, partition,
-               OmegaHFieldAdapter<GO>("temp", mesh_B, is_overlap));
+               OmegaHFieldAdapter<dtype>(field_name, mesh_B, is_overlap));
 
   // Initialize global comm on the app
   auto gdi_A = server_A.apps["client_A"]->Add_GDI<pcms::GO>("global_comm", comm);
@@ -257,7 +259,7 @@ void coupler(MPI_Comm comm, const std::string mesh_file){
     // start step
     done = 0;
 
-    auto dof_C = Omega_h::deep_copy(mesh_A.get_array<GO>(0, "temp"));
+    auto dof_C = Omega_h::deep_copy(mesh_A.get_array<dtype>(0, "temp"));
 
     // Receive from A to C
     server_A.apps["client_A"]->BeginReceivePhase();
@@ -267,10 +269,10 @@ void coupler(MPI_Comm comm, const std::string mesh_file){
     server_A.apps["client_A"]->EndReceivePhase();
 
     //init the field
-    auto dof_A = mesh_A.get_array<GO>(0, "temp");
+    auto dof_A = mesh_A.get_array<dtype>(0, "temp");
 
     // --- after update: read new field values
-    auto rms = support::ComputeRMS(Omega_h::Read<GO>(dof_C),
+    auto rms = support::ComputeRMS(Omega_h::Read<dtype>(dof_C),
                              dof_A);
     printf("rms received at coupler:%f\n", rms);
     flag = (rms > tol);
@@ -296,7 +298,7 @@ void coupler(MPI_Comm comm, const std::string mesh_file){
     pcms::interpolate_field2(*field_B, *field_A);
 
     // --- after update: read new field values
-    rms = support::ComputeRMS(Omega_h::Read<GO>(dof_C),
+    rms = support::ComputeRMS(Omega_h::Read<dtype>(dof_C),
                              dof_A);
 
     // Send to App A

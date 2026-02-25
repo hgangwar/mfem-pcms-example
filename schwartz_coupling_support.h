@@ -31,7 +31,7 @@
 #include <Omega_h_mesh.hpp>
 #include <Omega_h_file.hpp>
 #include <Omega_h_vtk.hpp>
-
+typedef pcms::Real dtype;
 using namespace mfem;
 namespace support
 {
@@ -216,8 +216,8 @@ double RMSDiff(const std::vector<std::pair<double,double>> &a,
   }
   return std::sqrt(s / std::max<size_t>(1, a.size()));
 }
-long ComputeRMS(const Omega_h::Read<long>& a,
-                  const Omega_h::Read<long>& b)
+long ComputeRMS(const Omega_h::Read<dtype>& a,
+                  const Omega_h::Read<dtype>& b)
 {
   const int n = a.size();
 
@@ -228,8 +228,8 @@ long ComputeRMS(const Omega_h::Read<long>& a,
     return 0.0;
 
   // Copy to host
-  Omega_h::HostRead<long> ha(a);
-  Omega_h::HostRead<long> hb(b);
+  Omega_h::HostRead<dtype> ha(a);
+  Omega_h::HostRead<dtype> hb(b);
 
   double sum_sq = 0.0;
 
@@ -239,7 +239,7 @@ long ComputeRMS(const Omega_h::Read<long>& a,
     sum_sq += diff * diff;
   }
 
-  return std::sqrt(sum_sq / static_cast<long>(n));
+  return std::sqrt(sum_sq / static_cast<dtype>(n));
 }
 
 //--------------------------------------------------------------
