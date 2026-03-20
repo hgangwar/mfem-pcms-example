@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 find_package(Omega_h REQUIRED)
-find_package(meshfields REQUIRED)
+#find_package(meshfields REQUIRED)
 find_package(MFEM REQUIRED)
 find_package(pcms REQUIRED)
 #find_package(Gmsh REQUIRED)
@@ -32,21 +32,21 @@ target_link_libraries(coupler PUBLIC mfem pcms::pcms)
 #target_link_libraries(test_mfem_coupling PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})
 
 # add test_mfem_coupling as a test
-add_executable(convg_test test_coupling_convg.cpp test_support.cpp)
-target_link_libraries(convg_test PUBLIC mfem pcms::pcms)
+#add_executable(convg_test test_coupling_convg.cpp test_support.cpp)
+#target_link_libraries(convg_test PUBLIC mfem pcms::pcms)
 
-add_executable(test_GDI test_GDI.cpp)
-target_link_libraries(test_GDI PUBLIC mfem pcms::pcms)
+#add_executable(test_GDI test_GDI.cpp)
+#target_link_libraries(test_GDI PUBLIC mfem pcms::pcms)
 
 
-add_executable(compare_mem_mesh compare_mem_mesh.cpp)
-target_link_libraries(compare_mem_mesh PUBLIC mfem pcms::pcms)
+#add_executable(compare_mem_mesh compare_mem_mesh.cpp)
+#target_link_libraries(compare_mem_mesh PUBLIC mfem pcms::pcms)
 
-add_executable(compare_serial_mesh compare_serial_mesh.cpp)
-target_link_libraries(compare_serial_mesh PUBLIC mfem pcms::pcms)
+#add_executable(compare_serial_mesh compare_serial_mesh.cpp)
+#target_link_libraries(compare_serial_mesh PUBLIC mfem pcms::pcms)
 
-add_executable(write_osh write_osh.cpp)
-target_link_libraries(write_osh PUBLIC mfem pcms::pcms)
+#add_executable(write_osh write_osh.cpp)
+#target_link_libraries(write_osh PUBLIC mfem pcms::pcms)
 
 add_executable(mfem_solve mfem_solve.cpp)
 target_link_libraries(mfem_solve PUBLIC mfem)
@@ -54,8 +54,16 @@ target_link_libraries(mfem_solve PUBLIC mfem)
 add_executable(schwarz_coupling schwarz_coupling.cpp)
 target_link_libraries(schwarz_coupling PUBLIC mfem)
 
+add_executable(test_tag_transfer tests/test_tag_transfer.cpp)
+target_link_libraries(test_tag_transfer PUBLIC mfem pcms::pcms)
+
+
 add_executable(thermo_coupling thermo_coupling.cpp)
 target_link_libraries(thermo_coupling PUBLIC mfem pcms::pcms)
+
+add_executable(shift_mesh shift_mesh.cpp)
+target_link_libraries(shift_mesh PUBLIC mfem pcms::pcms)
+
 # add this to enable testing
 enable_testing()
 

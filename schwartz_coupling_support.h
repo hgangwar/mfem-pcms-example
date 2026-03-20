@@ -576,7 +576,33 @@ Omega_h::HostRead<Omega_h::I8> markMeshOverlapRegion(Omega_h::Mesh& mesh)
   auto isOverlap = markOverlapMeshEntities(mesh);
   return Omega_h::HostRead(isOverlap);
 }
+void write_oh_mesh(Omega_h::Mesh &mesh, const std::string &path)
+{
+  Omega_h::binary::write(path, &mesh);
+}
+// MFEM read
+mfem::Mesh read_mfem_mesh(const std::string &path)
+{
+  return mfem::Mesh(path.c_str(), 1, 1);
+}
+void reset_mfem_attributes(mfem::Mesh &mesh, int attr = 1)
+{
+  for (int e = 0; e < mesh.GetNE(); ++e)
+  {
+    mesh.SetAttribute(e, attr);
+  }
 
+  mesh.SetAttributes(); // rebuild attribute list
+}
+void remove_oh_tag(Omega_h::Mesh &mesh, const std::string &name)
+{
+  int dim = mesh.dim();
+
+  if (mesh.has_tag(dim, name))
+  {
+    mesh.remove_tag(dim, name);
+  }
+}
 }
 
 #endif // PCMS_MFEM_COUPLING_SCHWARTZ_COUPLING_SUPPORT_H
