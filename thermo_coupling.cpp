@@ -247,11 +247,11 @@ void coupler(MPI_Comm comm, const std::string mesh_file){
 
   // Setup layouts and  field pointers
   auto layout_A = pcms::CreateLagrangeLayout(mesh_A, 1, 1, pcms::CoordinateSystem::Cartesian, "global");
-  auto field_A = layout_A->CreateField();
+  auto field_A = layout_A->CreateFieldReal();
   field_A->SetOutOfBoundsMode(pcms::OutOfBoundsMode::FILL, fill_value);
 
   auto layout_B = pcms::CreateLagrangeLayout(mesh_B, 1, 1, pcms::CoordinateSystem::Cartesian, "global");
-  auto field_B = layout_B->CreateField();
+  auto field_B = layout_B->CreateFieldReal();
   field_B->SetOutOfBoundsMode(pcms::OutOfBoundsMode::FILL, fill_value);
 
   double w = 1.0;  //Schwarz coupling relaxation
