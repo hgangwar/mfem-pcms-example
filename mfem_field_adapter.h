@@ -101,14 +101,21 @@ namespace pcms
         // create a vector to store the serialized data
         mfem::Vector serialized_data(pfes_.GetTrueVSize());
         R->Mult(gf_data_, serialized_data);
-        mfem::Vector filtered_data(packed_size_);
+        pcms::LO filtered_size = has_mask()?packed_size_:pfes_.GetTrueVSize();
+        mfem::Vector filtered_data(filtered_size);
 
         if (!has_mask()) {
+          MFEM_VERIFY(filtered_data.Size() == serialized_data.Size(),
+            "size of filtered_data doesn't match with original data");
+          printf("\n Size of filtered_data : %d, serialized data: %d", filtered_data.Size(), serialized_data.Size());
           for (pcms::LO i = 0; i < serialized_data.Size(); ++i) {
             filtered_data[i] = serialized_data[i];
           }
         } else {
           for (pcms::LO i = 0; i < packed_size_; ++i) {
+            MFEM_VERIFY(filtered_data.Size() == this->mask_storage_.Size(),
+            "size of filtered_data doesn't match with original data");
+            printf("\n Size of filtered_data : %d, serialized data: %d\n", filtered_data.Size(), serialized_data.Size());
             if (mask_view_(i) > 0) {
               const pcms::LO idx = mask_view_(i) - 1;
               filtered_data[idx] = serialized_data[i];
@@ -166,11 +173,15 @@ namespace pcms
       R->Mult(gf_data_, serialized_data);
       if (has_mask()) {
         // Merge the buffer and true data
-        int count = 0;
-        for (int i=0; i<serialized_data.Size(); ++i) {
-          if (mask_view_(i)) {
-            serialized_data[i] = buffer_vector[count++];
-          }
+
+      }
+      int count = 0;
+      for (int i=0; i<serialized_data.Size(); ++i) {
+        if (!has_mask()) {
+          serialized_data[i] = buffer_vector[i];
+        }
+        else if (mask_view_(i)) {
+          serialized_data[i] = buffer_vector[count++];
         }
       }
 

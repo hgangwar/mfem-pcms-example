@@ -85,10 +85,10 @@ int main(int argc, char** argv)
 
   mfem::H1_FECollection fec(order, dim);
   mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
-	mfem::ParGridFunction gf_data(&pfes);
+  mfem::ParGridFunction gf_data(&pfes);
 
-	// TODO: Will also do function coefficient
-	std::iota(gf_data.begin(), gf_data.end(), 0.0);
+  // TODO: Will also do function coefficient
+  std::iota(gf_data.begin(), gf_data.end(), 0.0);
 	
   // gf_data is a "vector" fill it up with something we know
   // ! we don't need this since we can fill gf_data with projection function
@@ -123,7 +123,7 @@ int main(int argc, char** argv)
   std::transform(buffer.begin(), buffer.end(), buffer.begin(), [](double val){ return val*2; });
   adapter.Deserialize(make_const_array_view(buffer), make_const_array_view(permutation));
   true_gf_data = make_true_gf_data(gf_data, pfes);
-  PCMS_ALWAYS_ASSERT(check_data(buffer, gf_data));
+  PCMS_ALWAYS_ASSERT(check_data(buffer, true_gf_data));
 
   // Test that GIDS is correct
   // get gids directly from the mesh and compare values to GetGids function
