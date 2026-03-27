@@ -56,24 +56,38 @@ namespace pcms
       PCMS_FUNCTION_TIMER;
 
       const int ne = pmesh_.GetNE();
-      mask_storage_.SetSize(ne);
+      const int nv = pmesh_.GetNV();
+
+      printf("Number of elements in the mesh: %d\n", ne);
+      printf("Number of vertices in the mesh: %d\n", nv);
+
+      mask_storage_.SetSize(nv);
+      mask_storage_ = 0;
 
       pcms::LO count = 0;
+      mfem::Array<int> vert_ids;
 
       for (int e = 0; e < ne; ++e)
       {
-        if (pmesh_.GetAttribute(e) == attr)
+        if (pmesh_.GetAttribute(e) != attr) { continue; }
+
+        pmesh_.GetElementVertices(e, vert_ids);
+
+        for (int j = 0; j < vert_ids.Size(); ++j)
         {
-          mask_storage_[e] = ++count;
-        }
-        else
-        {
-          mask_storage_[e] = 0;
+          const int v = vert_ids[j];
+
+          if (mask_storage_[v] == 0)
+          {
+            mask_storage_[v] = ++count;
+          }
         }
       }
 
       packed_size_ = count;
       hasmask_ = (packed_size_ > 0);
+
+      printf("Filtered %d unique vertices.\n", packed_size_);
 
       mask_view_ = Rank1View<pcms::LO, Kokkos::HostSpace>(
           mask_storage_.GetData(), mask_storage_.Size());
@@ -103,23 +117,24 @@ namespace pcms
         R->Mult(gf_data_, serialized_data);
         pcms::LO filtered_size = has_mask()?packed_size_:pfes_.GetTrueVSize();
         mfem::Vector filtered_data(filtered_size);
+        printf("\n Size of filtered_data : %d, mask size: %d\n", filtered_data.Size(), this->mask_storage_.Size());
 
-        if (!has_mask()) {
-          MFEM_VERIFY(filtered_data.Size() == serialized_data.Size(),
-            "size of filtered_data doesn't match with original data");
-          printf("\n Size of filtered_data : %d, serialized data: %d", filtered_data.Size(), serialized_data.Size());
+        if (has_mask()) {
           for (pcms::LO i = 0; i < serialized_data.Size(); ++i) {
-            filtered_data[i] = serialized_data[i];
-          }
-        } else {
-          for (pcms::LO i = 0; i < packed_size_; ++i) {
-            MFEM_VERIFY(filtered_data.Size() == this->mask_storage_.Size(),
-            "size of filtered_data doesn't match with original data");
-            printf("\n Size of filtered_data : %d, serialized data: %d\n", filtered_data.Size(), serialized_data.Size());
             if (mask_view_(i) > 0) {
               const pcms::LO idx = mask_view_(i) - 1;
+
+              if (idx >= packed_size_) {
+                std::cerr << "Assertion failed: index out of range for filtered array. "
+                          <<" itr:"<<i<< " idx: " << idx << ", packed_size_: " << packed_size_ << std::endl;
+                std::abort();
+              }
               filtered_data[idx] = serialized_data[i];
             }
+          }
+        } else {
+          for (pcms::LO i = 0; i < serialized_data.Size(); ++i) {
+            filtered_data[i] = serialized_data[i];
           }
         }
         // ! instead of returning the serialized data, we need to write it to the buffer
@@ -134,7 +149,7 @@ namespace pcms
           }
         }
       }
-      return pfes_.GetTrueVSize();
+      return packed_size_;
     }
 
     // REQUIRED
@@ -198,36 +213,24 @@ namespace pcms
   * 
  */
   [[nodiscard]] std::vector<GO> GetGids() const
-    {
-      PCMS_FUNCTION_TIMER;
-      auto * R = pfes_.GetRestrictionMatrix();
-      if(!R) {
-        std::cerr<<"R matrix is nullptr\n";
-        std::abort();
-      }
+   {
+     PCMS_FUNCTION_TIMER;
+
       mfem::Array<HYPRE_BigInt> gids;
       pmesh_.GetGlobalVertexIndices(gids);
-      int size = gids.Size();
-      mfem::Vector gid_vector(size);
-      for(int i=0; i<size; ++i) {
-        gid_vector[i] = gids[i];
-      }
-      mfem::Vector tgids(pfes_.GetTrueVSize());
-      //R->BooleanMult(gids, tgids);
-      R->Mult(gid_vector, tgids);
-      //auto gids_host = gids.HostRead();
-      // ? where should the return go?
-      if (!has_mask()){
-        return {tgids.begin(), tgids.end()};
-      }
-      else {
-        mfem::Vector filtered_gids(packed_size_);
 
-        for (int i=0; i<packed_size_; ++i) {
-          filtered_gids[i]=tgids[mask_storage_[i]];
+      if (has_mask()) {
+        std::vector<GO> filtered_gids(packed_size_);
+
+        for (int i = 0; i < mask_storage_.Size(); ++i) {
+          if (mask_view_(i) > 0) {
+            filtered_gids[mask_view_(i) - 1] = static_cast<GO>(gids[i]);
+          }
         }
-        return {filtered_gids.begin(), filtered_gids.end()};
+        return filtered_gids;
       }
+
+      return {gids.begin(), gids.end()};
     }
   // REQUIRED
   [[nodiscard]] ReversePartitionMap GetReversePartitionMap(
