@@ -112,7 +112,6 @@ namespace pcms
           std::abort();
         } 
         // multiply the gf_data with the R matrix to get the serialized data
-        // create a vector to store the serialized data
         mfem::Vector serialized_data(pfes_.GetTrueVSize());
         R->Mult(gf_data_, serialized_data);
         pcms::LO filtered_size = has_mask()?packed_size_:pfes_.GetTrueVSize();
@@ -149,6 +148,7 @@ namespace pcms
           }
         }
       }
+
       return packed_size_;
     }
 
@@ -190,13 +190,13 @@ namespace pcms
         // Merge the buffer and true data
 
       }
-      int count = 0;
       for (int i=0; i<serialized_data.Size(); ++i) {
         if (!has_mask()) {
           serialized_data[i] = buffer_vector[i];
         }
         else if (mask_view_(i)) {
-          serialized_data[i] = buffer_vector[count++];
+          const pcms::LO idx = mask_view_(i) - 1;
+          serialized_data[i] = buffer_vector[idx];
         }
       }
 
@@ -212,16 +212,14 @@ namespace pcms
   * @return std::vector<GO>
   * 
  */
-  [[nodiscard]] std::vector<GO> GetGids() const
-   {
-     PCMS_FUNCTION_TIMER;
-
+    [[nodiscard]] std::vector<GO> GetGids() const
+    {
+      PCMS_FUNCTION_TIMER;
       mfem::Array<HYPRE_BigInt> gids;
       pmesh_.GetGlobalVertexIndices(gids);
 
       if (has_mask()) {
         std::vector<GO> filtered_gids(packed_size_);
-
         for (int i = 0; i < mask_storage_.Size(); ++i) {
           if (mask_view_(i) > 0) {
             filtered_gids[mask_view_(i) - 1] = static_cast<GO>(gids[i]);
@@ -229,7 +227,6 @@ namespace pcms
         }
         return filtered_gids;
       }
-
       return {gids.begin(), gids.end()};
     }
   // REQUIRED
