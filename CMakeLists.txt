@@ -30,6 +30,11 @@ target_link_libraries(mfem_adapter_unit_test PUBLIC mfem pcms::pcms)
 add_executable(mfem_adapter_mask_test tests/test_mfem_mask.cpp)
 target_link_libraries(mfem_adapter_mask_test PUBLIC mfem pcms::pcms)
 
+add_executable(oh_adapter_mask_test tests/test_oh_mask_with_adapter.cpp)
+target_link_libraries(oh_adapter_mask_test PUBLIC mfem pcms::pcms)
+
+add_executable(describe describe.cpp)
+target_link_libraries(describe PUBLIC mfem pcms::pcms)
 # add test_mfem_coupling as a test
 #add_executable(test_mfem_coupling test_mfem_coupling.cpp test_support.cpp)
 #target_link_libraries(test_mfem_coupling PUBLIC mfem pcms::pcms  ${Gmsh_LIBRARIES})

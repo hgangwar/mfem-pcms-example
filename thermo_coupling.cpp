@@ -9,9 +9,8 @@ using pcms::OmegaHFieldAdapter;
 
 using namespace std;
 
-
-
-static void app_A(MPI_Comm comm, const std::string mesh_file, support::ThermalParams params, string solver_type,
+static void app_A(MPI_Comm comm, const std::string mesh_file,
+                  support::ThermalParams params, string solver_type,
                   string prec_type)
 {
   // Order of fes assumed
@@ -30,18 +29,18 @@ static void app_A(MPI_Comm comm, const std::string mesh_file, support::ThermalPa
   // const double tol= support::DefaultTolX(pmesh);
 
   // Initialize the FEA System
-  support::FEMSystem fem =
-    support::Init_FEMSystem(&pmesh, order, params.kappa);
+  support::FEMSystem fem = support::Init_FEMSystem(&pmesh, order, params.kappa);
 
   // Essential boundaries: both x-min and x-max for each subdomain
-  Array<int> ess_bdrA(pmesh.bdr_attributes.Max()); ess_bdrA = 0;
+  Array<int> ess_bdrA(pmesh.bdr_attributes.Max());
+  ess_bdrA = 0;
   ess_bdrA[left_bdr_x] = 1;
   ess_bdrA[right_bdr_x] = 1;
 
   // Apply boundary condtition
   fem.fes->GetEssentialTrueDofs(ess_bdrA, fem.ess_tdofs);
-  support::ApplyBoundaryConstantByAttr   (pmesh, *fem.x, left_bdr_x, T_left);
-  support::ApplyBoundaryConstantByAttr   (pmesh, *fem.x, right_bdr_x, 280);
+  support::ApplyBoundaryConstantByAttr(pmesh, *fem.x, left_bdr_x, T_left);
+  support::ApplyBoundaryConstantByAttr(pmesh, *fem.x, right_bdr_x, 280);
 
   // ---- Output ----
   support::OutputPack outA("schwarz_A", pmesh, *fem.fes);
@@ -54,13 +53,16 @@ static void app_A(MPI_Comm comm, const std::string mesh_file, support::ThermalPa
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_name = {"client_A"};
   std::vector<string> field_name = {"temp"};
-
+  bool use_mask = true;
+  pcms::LO attr = 1; // This attribute represents the coupling domain 1 ->
+                     // coupling, 2 -> mesh A
   // Initialize the MFEM adapter
-  auto adapter = MFEMFieldAdapter(app_name[0], *fem.pmesh, *fem.fes, *fem.x);
+  auto adapter =
+    MFEMFieldAdapter(app_name[0], *fem.pmesh, *fem.fes, *fem.x, use_mask, attr);
 
   // Initialize coupling interface
-  auto client =
-    support::Init_Coupler(comm, coupler_name, app_name, field_name, false, {}, adapter);
+  auto client = support::Init_Coupler(comm, coupler_name, app_name, field_name,
+                                      false, {}, adapter);
 
   // Initialize global comm on the app
   auto gdi = client.apps["client_A"]->Add_GDI<pcms::GO>("global_comm", comm);
@@ -69,8 +71,8 @@ static void app_A(MPI_Comm comm, const std::string mesh_file, support::ThermalPa
   auto itr = 1;
   do {
     auto curr_field = *fem.x;
-    auto residual = support::SolveSystem(fem, solver_type,
-                                              prec_type, 1e-8, 500);
+    auto residual =
+      support::SolveSystem(fem, solver_type, prec_type, 1e-8, 500);
     support::SaveFields(outA, fem, itr);
     //  Send from A to C
     client.apps["client_A"]->BeginSendPhase();
@@ -95,17 +97,17 @@ static void app_A(MPI_Comm comm, const std::string mesh_file, support::ThermalPa
     client.apps["client_A"]->EndReceivePhase();
     itr++;
   } while (flag);
-
 }
 
-static void app_B(MPI_Comm comm, const std::string mesh_file, support::ThermalParams params , string solver_type,
+static void app_B(MPI_Comm comm, const std::string mesh_file,
+                  support::ThermalParams params, string solver_type,
                   string prec_type)
 {
   // Order of fes assumed
   int order = 1;
-  // ΩB: [0.4,1]x[0,1] (build [0,0.6] then shift by +0.4)
   mfem::Mesh mesh(mesh_file, 1, 1);
-  for (int i = 0; i < mesh.GetNV(); i++) { mesh.GetVertex(i)[0] += 0.4; }
+
+  // for (int i = 0; i < mesh.GetNV(); i++) { mesh.GetVertex(i)[0] += 0.4; }
   ParMesh pmesh(comm, mesh);
 
   // States
@@ -113,14 +115,14 @@ static void app_B(MPI_Comm comm, const std::string mesh_file, support::ThermalPa
   double left_bdr_x = 1;
   double right_bdr_x = 3;
   // Estimate tolerance for the mesh
-  const double tol= support::DefaultTolX(pmesh);
+  const double tol = support::DefaultTolX(pmesh);
 
   // Initialize the FEA System
-  support::FEMSystem fem =
-    support::Init_FEMSystem(&pmesh, order, params.kappa);
+  support::FEMSystem fem = support::Init_FEMSystem(&pmesh, order, params.kappa);
 
   // Essential boundaries: both x-min and x-max for each subdomain
-  Array<int> ess_bdrB(pmesh.bdr_attributes.Max()); ess_bdrB = 0;
+  Array<int> ess_bdrB(pmesh.bdr_attributes.Max());
+  ess_bdrB = 0;
   ess_bdrB[left_bdr_x] = 1;
   ess_bdrB[right_bdr_x] = 1;
 
@@ -128,7 +130,7 @@ static void app_B(MPI_Comm comm, const std::string mesh_file, support::ThermalPa
   fem.fes->GetEssentialTrueDofs(ess_bdrB, fem.ess_tdofs);
 
   // Apply boundary condtition (left edge should be filled by compiler)
-  support::ApplyBoundaryConstantByAttr   (pmesh, *fem.x, left_bdr_x, T_right);
+  support::ApplyBoundaryConstantByAttr(pmesh, *fem.x, left_bdr_x, T_right);
 
   // ---- Output ----
   support::OutputPack outB("schwarz_B", pmesh, *fem.fes);
@@ -141,15 +143,18 @@ static void app_B(MPI_Comm comm, const std::string mesh_file, support::ThermalPa
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_name = {"client_B"};
   std::vector<string> field_name = {"temp"};
+  pcms::LO attr = 1; // This indicates the coupling domain
+  bool use_mask = true;
 
   // Initialize the MFEM adapter
-  auto adapter = MFEMFieldAdapter(app_name[0], *fem.pmesh, *fem.fes, *fem.x);
+  auto adapter =
+    MFEMFieldAdapter(app_name[0], *fem.pmesh, *fem.fes, *fem.x, use_mask, attr);
   auto itr = 1;
   auto flag = 1;
 
   // Initialize coupling interface
-  auto client =
-    support::Init_Coupler(comm, coupler_name, app_name, field_name, false, {}, adapter);
+  auto client = support::Init_Coupler(comm, coupler_name, app_name, field_name,
+                                      false, {}, adapter);
 
   // Initialize global comm on the app
   auto gdi = client.apps["client_B"]->Add_GDI<pcms::GO>("global_comm", comm);
@@ -163,8 +168,8 @@ static void app_B(MPI_Comm comm, const std::string mesh_file, support::ThermalPa
     if (itr > 1 && flag == 0)
       break;
 
-    auto residual = support::SolveSystem(fem, solver_type, prec_type,
-                                              1e-8, 500);
+    auto residual =
+      support::SolveSystem(fem, solver_type, prec_type, 1e-8, 500);
 
     support::SaveFields(outB, fem, itr);
 
@@ -188,22 +193,25 @@ static void app_B(MPI_Comm comm, const std::string mesh_file, support::ThermalPa
 
   } while (flag);
 }
-void coupler(MPI_Comm comm, const std::string mesh_file){
+void coupler(MPI_Comm comm, const std::string mesh_A_file,
+             const std::string mesh_B_file)
+{
   // Mesh init
   Omega_h::Library lib(nullptr, nullptr, comm);
   auto world = lib.world();
 
   // Read Mesh for App A
   Omega_h::Mesh mesh_A(&lib);
-  Omega_h::binary::read(mesh_file, world, &mesh_A);
+  Omega_h::binary::read(mesh_A_file, world, &mesh_A);
 
   auto dim = mesh_A.dim();
   const auto nverts = mesh_A.nverts();
 
   // Create Mesh for App B by shifting mesh_A
-  Omega_h::Mesh mesh_B = mesh_A;
-  double dx = 0.4;
-  support::shift_meshX(mesh_B, dx);
+  Omega_h::Mesh mesh_B(&lib);
+  Omega_h::binary::read(mesh_B_file, world, &mesh_B);
+  // double dx = 0.4;
+  // support::shift_meshX(mesh_B, dx);
   dtype random_temp = 280;
   Omega_h::Read<dtype> init(nverts, random_temp); // init with random guess
   auto field_name = std::string("temp");
@@ -212,9 +220,12 @@ void coupler(MPI_Comm comm, const std::string mesh_file){
   auto isOwned = mesh_A.owned(0);
 
   // is_overlap is a vector of size mesh.nents(0) and is initialized to 1
-  Omega_h::Write<Omega_h::I8> is_overlap(mesh_A.nents(0));
-  Omega_h::parallel_for(
-    is_overlap.size(), OMEGA_H_LAMBDA(int i) { is_overlap[i] = 1; });
+  // Omega_h::Write<Omega_h::I8> is_overlap_A(mesh_A.nents(0));
+  // Omega_h::parallel_for(
+  //  is_overlap.size(), OMEGA_H_LAMBDA(int i) { is_overlap[i] = 1; });
+  pcms::LO tag = 0;
+  auto is_overlap_A = support::create_mask(mesh_A, "domain", tag);
+  auto is_overlap_B = support::create_mask(mesh_B, "domain", tag);
 
   // Define Partition
   redev::LOs ranks(1);
@@ -228,16 +239,20 @@ void coupler(MPI_Comm comm, const std::string mesh_file){
   std::vector<string> field_names = {field_name, field_name};
 
   // Initialize coupling interface
-  auto server_A =
-    support::Init_Coupler(comm, coupler_name, app_names, field_names, true, partition,
-                 OmegaHFieldAdapter<dtype>(field_name, mesh_A, is_overlap));
-  auto server_B =
-    support::Init_Coupler(comm, coupler_name, app_names, field_names, true, partition,
-               OmegaHFieldAdapter<dtype>(field_name, mesh_B, is_overlap));
+  // auto coupler = std::make_unique<pcms::Coupler>(field_name, comm, true,
+  // partition);
+  auto adapter_A = OmegaHFieldAdapter<dtype>(field_name, mesh_A, is_overlap_A);
+  auto adapter_B = OmegaHFieldAdapter<dtype>(field_name, mesh_B, is_overlap_B);
+  auto server_A = support::Init_Coupler(
+    comm, coupler_name, app_names, field_names, true, partition, adapter_A);
+  auto server_B = support::Init_Coupler(
+    comm, coupler_name, app_names, field_names, true, partition, adapter_B);
 
   // Initialize global comm on the app
-  auto gdi_A = server_A.apps["client_A"]->Add_GDI<pcms::GO>("global_comm", comm);
-  auto gdi_B = server_B.apps["client_B"]->Add_GDI<pcms::GO>("global_comm", comm);
+  auto gdi_A =
+    server_A.apps["client_A"]->Add_GDI<pcms::GO>("global_comm", comm);
+  auto gdi_B =
+    server_B.apps["client_B"]->Add_GDI<pcms::GO>("global_comm", comm);
 
   GO flag = 1; // True to continue
   int itr = 1;
@@ -246,15 +261,17 @@ void coupler(MPI_Comm comm, const std::string mesh_file){
   pcms::Real fill_value = 0.0;
 
   // Setup layouts and  field pointers
-  auto layout_A = pcms::CreateLagrangeLayout(mesh_A, 1, 1, pcms::CoordinateSystem::Cartesian, "global");
+  auto layout_A = pcms::CreateLagrangeLayout(
+    mesh_A, 1, 1, pcms::CoordinateSystem::Cartesian, "global");
   auto field_A = layout_A->CreateFieldReal();
   field_A->SetOutOfBoundsMode(pcms::OutOfBoundsMode::FILL, fill_value);
 
-  auto layout_B = pcms::CreateLagrangeLayout(mesh_B, 1, 1, pcms::CoordinateSystem::Cartesian, "global");
+  auto layout_B = pcms::CreateLagrangeLayout(
+    mesh_B, 1, 1, pcms::CoordinateSystem::Cartesian, "global");
   auto field_B = layout_B->CreateFieldReal();
   field_B->SetOutOfBoundsMode(pcms::OutOfBoundsMode::FILL, fill_value);
 
-  double w = 1.0;  //Schwarz coupling relaxation
+  double w = 1.0; // Schwarz coupling relaxation
   do {
     // start step
     done = 0;
@@ -268,12 +285,11 @@ void coupler(MPI_Comm comm, const std::string mesh_file){
     printf("received residual at coupler from A=%g\n", residual);
     server_A.apps["client_A"]->EndReceivePhase();
 
-    //init the field
+    // init the field
     auto dof_A = mesh_A.get_array<dtype>(0, "temp");
 
     // --- after update: read new field values
-    auto rms = support::ComputeRMS(Omega_h::Read<dtype>(dof_C),
-                             dof_A);
+    auto rms = support::ComputeRMS(Omega_h::Read<dtype>(dof_C), dof_A);
     printf("rms received at coupler:%f\n", rms);
     flag = (rms > tol);
 
@@ -298,8 +314,7 @@ void coupler(MPI_Comm comm, const std::string mesh_file){
     pcms::interpolate_field2(*field_B, *field_A);
 
     // --- after update: read new field values
-    rms = support::ComputeRMS(Omega_h::Read<dtype>(dof_C),
-                             dof_A);
+    rms = support::ComputeRMS(Omega_h::Read<dtype>(dof_C), dof_A);
 
     // Send to App A
     server_A.apps["client_A"]->BeginSendPhase();
@@ -340,20 +355,20 @@ int main(int argc, char* argv[])
 
   support::ThermalParams params;
   params.size = {0.6, 1.0};
-  params.ne   = {30, 30};
-  //params.q_total = 10.0;
-  params.kappa   = 1.0;
-  //params.rho     = 1.0;
-  //params.cp      = 1.0;
-  //params.h_flux  = 0.0;
-  //params.h_conv  = 0.0;
-  //params.T_conv  = 0.0;
-  //params.T_dirichlet = 300.0;
+  params.ne = {30, 30};
+  // params.q_total = 10.0;
+  params.kappa = 1.0;
+  // params.rho     = 1.0;
+  // params.cp      = 1.0;
+  // params.h_flux  = 0.0;
+  // params.h_conv  = 0.0;
+  // params.T_conv  = 0.0;
+  // params.T_dirichlet = 300.0;
 
   MPI_Comm comm = MPI_COMM_WORLD;
   {
     switch (clientId) {
-      case -1: coupler(comm ,meshFile); break;
+      case -1: coupler(comm, meshFile, argv[3]); break;
       case 0: app_A(comm, meshFile, params, argv[3], argv[4]); break;
       case 1: app_B(comm, meshFile, params, argv[3], argv[4]); break;
       default:
