@@ -207,12 +207,13 @@ public:
     PCMS_FUNCTION_TIMER;
     mfem::Array<HYPRE_BigInt> gids;
     pmesh_.GetGlobalVertexIndices(gids);
-
+    LO count = 0;
     if (has_mask()) {
       std::vector<GO> filtered_gids(packed_size_);
       for (int i = 0; i < mask_storage_.Size(); ++i) {
         if (mask_view_(i) > 0) {
-          filtered_gids[mask_view_(i) - 1] = static_cast<GO>(gids[i]);
+          //filtered_gids[mask_view_(i) - 1] = static_cast<GO>(gids[i]);
+          filtered_gids.push_back(static_cast<GO>(gids[i]));
         }
       }
       return filtered_gids;
@@ -279,4 +280,4 @@ private:
 
 } // namespace pcms
 
-#endif // PCMS_COUPLING_XGC_FIELD_ADAPTER_H
+#endif // PCMS_COUPLING_MFEM_FIELD_ADAPTER_H
