@@ -57,24 +57,23 @@ add_executable(mfem_solve mfem_solve.cpp)
 target_link_libraries(mfem_solve PUBLIC mfem)
 
 ################### SUNDIALS Schwartz Iterations #########################
-add_library(schwartz_sundial Schwarz_Sundial_Coupling.cpp)
+add_library(schwarz_sundial Schwarz_Sundial_Coupling.cpp)
 
-target_include_directories(schwartz_sundial PUBLIC
+target_include_directories(schwarz_sundial PUBLIC
         ${SUNDIALS_ROOT}/include
 )
 
-target_link_libraries(schwartz_sundial PUBLIC
+target_link_libraries(schwarz_sundial PUBLIC
         mfem
         ${SUNDIALS_ROOT}/lib64/libsundials_core.so
         ${SUNDIALS_ROOT}/lib64/libsundials_nvecserial.so
+        ${SUNDIALS_ROOT}/lib64/libsundials_arkode.so
 )
-add_executable(stepper
-        Sunstepper.cpp
-)
+add_executable(stepper Sunstepper.cpp)
+target_link_libraries(stepper PUBLIC schwarz_sundial)
 
-target_link_libraries(stepper PUBLIC
-        schwartz_sundial
-)
+add_executable( ptn_stepper Partitioned_stepper.cpp)
+target_link_libraries( ptn_stepper PUBLIC schwarz_sundial)
 
 # add this to enable testing
 enable_testing()

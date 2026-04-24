@@ -9,23 +9,6 @@
 #include <iostream>
 #include <memory>
 
-namespace {
-
-double RMSDiff(const schwarz::Trace& a, const schwarz::Trace& b)
-{
-  MFEM_VERIFY(a.Size() == b.Size(), "Trace sizes differ in RMSDiff.");
-  double s = 0.0;
-  for (int i = 0; i < a.Size(); i++)
-  {
-    MFEM_VERIFY(std::abs(a.y[i] - b.y[i]) < 1e-10, "Trace y-grids differ.");
-    const double d = a.val[i] - b.val[i];
-    s += d * d;
-  }
-  return std::sqrt(s / std::max(1, a.Size()));
-}
-
-} // namespace
-
 int main(int argc, char* argv[])
 {
   MPI_Init(&argc, &argv);

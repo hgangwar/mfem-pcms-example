@@ -669,5 +669,188 @@ SUNErrCode CreateSchwarzSUNStepper(SUNContext sunctx,
 
   return SUN_SUCCESS;
 }
+static SUNErrCode SubdomainA_Evolve(SUNStepper stepper,
+                                    sunrealtype tout,
+                                    N_Vector y,
+                                    sunrealtype* tret)
+{
+  void* content_void = nullptr;
+  if (SUNStepper_GetContent(stepper, &content_void) != SUN_SUCCESS)
+    return SUN_ERR_EXT_FAIL;
 
+  auto* C = static_cast<schwarz::SchwarzStepperContent*>(content_void);
+
+  try
+  {
+    schwarz::Trace gA = C->gA_meta;
+    schwarz::Trace gB = C->gB_meta;
+    schwarz::UnpackState(y, gA, gB);
+
+    schwarz::Trace G = schwarz::BlendTrace(gA, gB, C->cfg.omega);
+
+    *C->sysA.x = 0.0;
+
+    ApplyBoundaryConstantByAttr(*C->sysA.pmesh, *C->sysA.x,
+                                C->A_attr_xmin,
+                                C->cfg.T_left);
+
+    ApplyBoundaryTraceByAttr(*C->sysA.pmesh, *C->sysA.x,
+                             C->A_attr_xmax,
+                             schwarz::TraceToPairTrace(G),
+                             C->tolA);
+
+    SolveSystem(C->sysA,
+                C->cfg.solver_type,
+                C->cfg.prec_type,
+                C->cfg.rel_tol,
+                C->cfg.max_lin_iter);
+
+    schwarz::Trace gA_new =
+        schwarz::PairTraceToTrace(
+            ExtractVertexLineTrace(*C->sysA.pmesh,
+                                   *C->sysA.x,
+                                   C->cfg.x_A_extract,
+                                   C->tolA));
+
+    schwarz::PackState(gA_new, gB, y);
+
+    if (tret) { *tret = tout; }
+
+    SUNStepper_SetLastFlag(stepper, SUN_SUCCESS);
+    return SUN_SUCCESS;
+  }
+  catch (...)
+  {
+    SUNStepper_SetLastFlag(stepper, SUN_ERR_EXT_FAIL);
+    return SUN_ERR_EXT_FAIL;
+  }
+}
+static SUNErrCode SubdomainB_Evolve(SUNStepper stepper,
+                                    sunrealtype tout,
+                                    N_Vector y,
+                                    sunrealtype* tret)
+{
+  void* content_void = nullptr;
+  if (SUNStepper_GetContent(stepper, &content_void) != SUN_SUCCESS)
+    return SUN_ERR_EXT_FAIL;
+
+  auto* C = static_cast<schwarz::SchwarzStepperContent*>(content_void);
+
+  try
+  {
+    // unpack y = [gA | gB]
+    schwarz::Trace gA = C->gA_meta;
+    schwarz::Trace gB = C->gB_meta;
+    schwarz::UnpackState(y, gA, gB);
+
+    // --- solve B ---
+    *C->sysB.x = 0.0;
+
+    // B left/interface boundary: apply gA at x = cfg.x_B_apply
+    ApplyBoundaryTraceByAttr(*C->sysB.pmesh, *C->sysB.x,
+                             C->B_attr_xmin,
+                             schwarz::TraceToPairTrace(gA),
+                             C->tolB);
+
+    // B right physical boundary: T = T_right
+    ApplyBoundaryConstantByAttr(*C->sysB.pmesh, *C->sysB.x,
+                                C->B_attr_xmax,
+                                C->cfg.T_right);
+
+    SolveSystem(C->sysB,
+                C->cfg.solver_type,
+                C->cfg.prec_type,
+                C->cfg.rel_tol,
+                C->cfg.max_lin_iter);
+
+    // extract new gB from B at x = cfg.x_B_extract
+    schwarz::Trace gB_new =
+        schwarz::PairTraceToTrace(
+            ExtractVertexLineTrace(*C->sysB.pmesh,
+                                   *C->sysB.x,
+                                   C->cfg.x_B_extract,
+                                   C->tolB));
+
+    // update ONLY gB, keep gA from current state
+    schwarz::PackState(gA, gB_new, y);
+
+    if (tret) { *tret = tout; }
+
+    SUNStepper_SetLastFlag(stepper, SUN_SUCCESS);
+    return SUN_SUCCESS;
+  }
+  catch (...)
+  {
+    SUNStepper_SetLastFlag(stepper, SUN_ERR_EXT_FAIL);
+    return SUN_ERR_EXT_FAIL;
+  }
+}
+
+SUNErrCode CreateSubdomainASUNStepper(SUNContext sunctx,
+                                      schwarz::SchwarzStepperContent* content,
+                                      SUNStepper* stepper)
+{
+  if (SUNStepper_Create(sunctx, stepper) != SUN_SUCCESS)
+    return SUN_ERR_EXT_FAIL;
+
+  if (SUNStepper_SetContent(*stepper, content) != SUN_SUCCESS)
+    return SUN_ERR_EXT_FAIL;
+
+  if (SUNStepper_SetEvolveFn(*stepper, SubdomainA_Evolve) != SUN_SUCCESS)
+    return SUN_ERR_EXT_FAIL;
+
+  return SUN_SUCCESS;
+}
+SUNErrCode CreateSubdomainBSUNStepper(SUNContext sunctx,
+                                      schwarz::SchwarzStepperContent* content,
+                                      SUNStepper* stepper)
+{
+  if (SUNStepper_Create(sunctx, stepper) != SUN_SUCCESS)
+    return SUN_ERR_EXT_FAIL;
+
+  if (SUNStepper_SetContent(*stepper, content) != SUN_SUCCESS)
+    return SUN_ERR_EXT_FAIL;
+
+  if (SUNStepper_SetEvolveFn(*stepper, SubdomainB_Evolve) != SUN_SUCCESS)
+    return SUN_ERR_EXT_FAIL;
+
+  return SUN_SUCCESS;
+}
+double RMSDiff(const Trace& a, const Trace& b)
+{
+  MFEM_VERIFY(a.Size() == b.Size(), "Trace sizes differ in RMSDiff.");
+  double s = 0.0;
+
+  for (int i = 0; i < a.Size(); i++)
+  {
+    MFEM_VERIFY(std::abs(a.y[i] - b.y[i]) < 1e-10, "Trace y-grids differ.");
+    const double d = a.val[i] - b.val[i];
+    s += d * d;
+  }
+
+  return std::sqrt(s / std::max(1, a.Size()));
+}
+
+void ErrorToExact_270_30x(const mfem::ParMesh& pmesh,
+                          const mfem::ParGridFunction& T,
+                          double& rms,
+                          double& emax)
+{
+  double se = 0.0;
+  emax = 0.0;
+
+  const int nv = pmesh.GetNV();
+
+  for (int vi = 0; vi < nv; vi++)
+  {
+    const double* v = pmesh.GetVertex(vi);
+    const double Tex = 270.0 + 30.0 * v[0];
+    const double e = T(vi) - Tex;
+
+    se += e * e;
+    emax = std::max(emax, std::abs(e));
+  }
+
+  rms = std::sqrt(se / std::max(1, nv));
+}
 } // namespace schwarz

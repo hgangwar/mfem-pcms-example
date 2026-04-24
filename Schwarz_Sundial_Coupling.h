@@ -149,7 +149,19 @@ int SchwarzSweep(SchwarzStepperContent* C,
 SUNErrCode CreateSchwarzSUNStepper(SUNContext sunctx,
                                    SchwarzStepperContent* content,
                                    SUNStepper* stepper);
+SUNErrCode CreateSubdomainASUNStepper(SUNContext sunctx,
+                                      SchwarzStepperContent* content,
+                                      SUNStepper* stepper);
 
+SUNErrCode CreateSubdomainBSUNStepper(SUNContext sunctx,
+                                      SchwarzStepperContent* content,
+                                      SUNStepper* stepper);
+double RMSDiff(const Trace& a, const Trace& b);
+
+void ErrorToExact_270_30x(const mfem::ParMesh& pmesh,
+                          const mfem::ParGridFunction& T,
+                          double& rms,
+                          double& emax);
 } // namespace schwarz
 
 #endif // PCMS_MFEM_COUPLING_SCHWARTZ_SUNDIAL_COUPLING_H
