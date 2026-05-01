@@ -8,7 +8,7 @@
 
 
 #include "mfem.hpp"
-
+#include "support.h"
 #include <nvector/nvector_serial.h>
 #include <sundials/sundials_stepper.h>
 #include <sundials/sundials_context.h>
@@ -21,19 +21,6 @@
 #include <vector>
 
 namespace schwarz {
-
-struct FEMSystem
-{
-  mfem::ParMesh* pmesh = nullptr;
-  mfem::H1_FECollection* fec = nullptr;
-  mfem::ParFiniteElementSpace* fes = nullptr;
-
-  mfem::ParBilinearForm* a = nullptr;
-  mfem::ParLinearForm* b = nullptr;
-  mfem::ParGridFunction* x = nullptr;
-
-  mfem::Array<int> ess_tdofs;
-};
 
 struct Trace
 {
@@ -73,8 +60,10 @@ struct SchwarzConfig
 
 struct SchwarzStepperContent
 {
-  FEMSystem sysA;
-  FEMSystem sysB;
+  SchwarzConfig cfg;
+
+  support::FEMSystem sysA;
+  support::FEMSystem sysB;
 
   int A_attr_xmin = -1;
   int A_attr_xmax = -1;
@@ -84,18 +73,12 @@ struct SchwarzStepperContent
   double tolA = 1e-12;
   double tolB = 1e-12;
 
-  SchwarzConfig cfg;
-
-  long int tcur = 0.0;
-  suncountertype nsteps = 0;
-
   Trace gA_meta;
   Trace gB_meta;
-};
 
-// ---------- setup / teardown ----------
-FEMSystem InitThermalSystem(mfem::ParMesh* pmesh, int order, double kappa_val);
-void DestroyFEMSystem(FEMSystem& sys);
+  sunrealtype tcur = 0.0;
+  suncountertype nsteps = 0;
+};
 
 void FindXMinMaxBoundaryAttributes(const mfem::ParMesh& pmesh,
                                    int& attr_xmin,
@@ -131,12 +114,7 @@ void ApplyBoundaryConstantByAttr(mfem::ParMesh& pmesh,
 void PackState(const Trace& gA, const Trace& gB, N_Vector nv);
 void UnpackState(N_Vector nv, Trace& gA, Trace& gB);
 
-// ---------- linear solve ----------
-double SolveSystem(FEMSystem& sys,
-                   const std::string& solver_type,
-                   const std::string& prec_type,
-                   double rel_tol,
-                   int max_iter);
+
 
 // ---------- one Schwarz sweep ----------
 int SchwarzSweep(SchwarzStepperContent* C,

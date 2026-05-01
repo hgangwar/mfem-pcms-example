@@ -124,17 +124,8 @@ static SUNErrCode SchwarzStepper_Destroy(SUNStepper stepper)
   auto* C = static_cast<SchwarzStepperContent*>(content_void);
   if (!C) return SUN_SUCCESS;
 
-  delete C->sysA.x;
-  delete C->sysA.a;
-  delete C->sysA.b;
-  delete C->sysA.fes;
-  delete C->sysA.fec;
-
-  delete C->sysB.x;
-  delete C->sysB.a;
-  delete C->sysB.b;
-  delete C->sysB.fes;
-  delete C->sysB.fec;
+  support::DestroyFEMSystem(C->sysA);
+  support::DestroyFEMSystem(C->sysB);
 
   delete C;
 
@@ -145,62 +136,6 @@ static SUNErrCode SchwarzStepper_Destroy(SUNStepper stepper)
 }
 } // namespace
 
-FEMSystem InitThermalSystem(ParMesh* pmesh, int order, double kappa_val)
-{
-  FEMSystem sys;
-  sys.pmesh = pmesh;
-
-  const int dim = pmesh->Dimension();
-  sys.fec = new H1_FECollection(order, dim);
-  sys.fes = new ParFiniteElementSpace(pmesh, sys.fec);
-
-  ConstantCoefficient zero(0.0);
-  sys.b = new ParLinearForm(sys.fes);
-  sys.b->AddDomainIntegrator(new DomainLFIntegrator(zero));
-  sys.b->Assemble();
-
-  ConstantCoefficient kappa(kappa_val);
-  sys.a = new ParBilinearForm(sys.fes);
-  sys.a->AddDomainIntegrator(new DiffusionIntegrator(kappa));
-  sys.a->Assemble();
-  sys.a->Finalize();
-
-  sys.x = new ParGridFunction(sys.fes);
-  *sys.x = 0.0;
-
-  return sys;
-}
-
-void DestroyFEMSystem(FEMSystem& sys)
-{
-  delete sys.x;
-  delete sys.a;
-  delete sys.b;
-  delete sys.fes;
-  delete sys.fec;
-
-  sys.x = nullptr;
-  sys.a = nullptr;
-  sys.b = nullptr;
-  sys.fes = nullptr;
-  sys.fec = nullptr;
-  sys.pmesh = nullptr;
-}
-
-double DefaultTolX(const Mesh& mesh)
-{
-  double xmin = 1e300;
-  double xmax = -1e300;
-  for (int i = 0; i < mesh.GetNV(); i++)
-  {
-    const double* v = mesh.GetVertex(i);
-    xmin = std::min(xmin, v[0]);
-    xmax = std::max(xmax, v[0]);
-  }
-
-  const double Lx = xmax - xmin;
-  return std::max(1e-12, 1e-10 * (std::abs(Lx) + 1.0));
-}
 
 void FindXMinMaxBoundaryAttributes(const ParMesh& pmesh,
                                    int& attr_xmin,
@@ -460,70 +395,6 @@ void UnpackState(N_Vector nv, Trace& gA, Trace& gB)
   }
 }
 
-double SolveSystem(FEMSystem& sys,
-                   const std::string& solver_type,
-                   const std::string& prec_type,
-                   double rel_tol,
-                   int max_iter)
-{
-  OperatorPtr A;
-  HypreParVector X, B;
-
-  sys.a->FormLinearSystem(sys.ess_tdofs, *sys.x, *sys.b, A, X, B);
-
-  auto* A_hypre = A.As<HypreParMatrix>();
-  MFEM_VERIFY(A_hypre, "FormLinearSystem did not produce HypreParMatrix.");
-
-  std::unique_ptr<Solver> prec;
-  if (prec_type == "HypreAMG")
-  {
-    auto amg = std::make_unique<HypreBoomerAMG>(*A_hypre);
-    amg->SetPrintLevel(0);
-    prec = std::move(amg);
-  }
-  else if (prec_type == "Jacobi")
-  {
-    auto sm = std::make_unique<HypreSmoother>(*A_hypre);
-    sm->SetType(HypreSmoother::Jacobi);
-    prec = std::move(sm);
-  }
-  else
-  {
-    MFEM_ABORT("Unknown preconditioner.");
-  }
-
-  std::unique_ptr<IterativeSolver> solver;
-  MPI_Comm comm = sys.fes->GetParMesh()->GetComm();
-
-  if (solver_type == "CG")
-  {
-    solver = std::make_unique<CGSolver>(comm);
-  }
-  else if (solver_type == "MINRES")
-  {
-    solver = std::make_unique<MINRESSolver>(comm);
-  }
-  else if (solver_type == "GMRES")
-  {
-    solver = std::make_unique<GMRESSolver>(comm);
-  }
-  else
-  {
-    MFEM_ABORT("Unknown solver.");
-  }
-
-  solver->SetOperator(*A_hypre);
-  solver->SetPreconditioner(*prec);
-  solver->SetRelTol(rel_tol);
-  solver->SetAbsTol(0.0);
-  solver->SetMaxIter(max_iter);
-  solver->SetPrintLevel(0);
-
-  solver->Mult(B, X);
-  sys.a->RecoverFEMSolution(X, *sys.b, *sys.x);
-
-  return solver->GetFinalNorm();
-}
 
 int SchwarzSweep(SchwarzStepperContent* C,
                  const Trace& gA_old,
@@ -531,45 +402,71 @@ int SchwarzSweep(SchwarzStepperContent* C,
                  Trace& gA_new,
                  Trace& gB_new)
 {
-  Trace G = BlendTrace(gA_old, gB_old, C->cfg.omega);
-
+  // A solve: use old gB directly on A's x-max boundary
   *C->sysA.x = 0.0;
-  ApplyBoundaryConstantByAttr(*C->sysA.pmesh, *C->sysA.x, C->A_attr_xmin,
-                              C->cfg.T_left);
-  ApplyBoundaryTraceByAttr(*C->sysA.pmesh, *C->sysA.x, C->A_attr_xmax,
-                           TraceToPairTrace(G), C->tolA);
 
-  SolveSystem(C->sysA, C->cfg.solver_type, C->cfg.prec_type,
-              C->cfg.rel_tol, C->cfg.max_lin_iter);
+  ApplyBoundaryConstantByAttr(*C->sysA.pmesh, *C->sysA.x,
+                              C->A_attr_xmin,
+                              C->cfg.T_left);
+
+  ApplyBoundaryTraceByAttr(*C->sysA.pmesh, *C->sysA.x,
+                           C->A_attr_xmax,
+                           TraceToPairTrace(gB_old),
+                           C->tolA);
+
+  support::SolveSystem(C->sysA,
+                       C->cfg.solver_type,
+                       C->cfg.prec_type,
+                       C->cfg.rel_tol,
+                       C->cfg.max_lin_iter);
 
   gA_new = PairTraceToTrace(
-      ExtractVertexLineTrace(*C->sysA.pmesh, *C->sysA.x,
-                             C->cfg.x_A_extract, C->tolA));
+      ExtractVertexLineTrace(*C->sysA.pmesh,
+                             *C->sysA.x,
+                             C->cfg.x_A_extract,
+                             C->tolA));
+
   if (gA_new.Empty())
   {
     throw std::runtime_error("Extracted empty gA trace in SchwarzSweep");
   }
 
+  // B solve: use updated gA on B's x-min boundary
   *C->sysB.x = 0.0;
-  ApplyBoundaryTraceByAttr(*C->sysB.pmesh, *C->sysB.x, C->B_attr_xmin,
-                           TraceToPairTrace(gA_new), C->tolB);
-  ApplyBoundaryConstantByAttr(*C->sysB.pmesh, *C->sysB.x, C->B_attr_xmax,
+
+  ApplyBoundaryTraceByAttr(*C->sysB.pmesh, *C->sysB.x,
+                           C->B_attr_xmin,
+                           TraceToPairTrace(gA_new),
+                           C->tolB);
+
+  ApplyBoundaryConstantByAttr(*C->sysB.pmesh, *C->sysB.x,
+                              C->B_attr_xmax,
                               C->cfg.T_right);
 
-  SolveSystem(C->sysB, C->cfg.solver_type, C->cfg.prec_type,
-              C->cfg.rel_tol, C->cfg.max_lin_iter);
+  support::SolveSystem(C->sysB,
+                       C->cfg.solver_type,
+                       C->cfg.prec_type,
+                       C->cfg.rel_tol,
+                       C->cfg.max_lin_iter);
 
-  gB_new = PairTraceToTrace(
-      ExtractVertexLineTrace(*C->sysB.pmesh, *C->sysB.x,
-                             C->cfg.x_B_extract, C->tolB));
-  if (gB_new.Empty())
+  Trace gB_raw = PairTraceToTrace(
+      ExtractVertexLineTrace(*C->sysB.pmesh,
+                             *C->sysB.x,
+                             C->cfg.x_B_extract,
+                             C->tolB));
+
+  if (gB_raw.Empty())
   {
     throw std::runtime_error("Extracted empty gB trace in SchwarzSweep");
   }
 
-  if (gA_new.Size() != C->gA_meta.Size() || gB_new.Size() != C->gB_meta.Size())
+  // Relax only same-location trace: old gB and new gB_raw both live at x=0.6
+  gB_new = gB_raw;
+  for (int i = 0; i < gB_new.Size(); i++)
   {
-    throw std::runtime_error("Trace size changed across Schwarz sweeps");
+    gB_new.val[i] =
+        C->cfg.omega * gB_raw.val[i]
+      + (1.0 - C->cfg.omega) * gB_old.val[i];
   }
 
   return 0;
@@ -599,11 +496,11 @@ BuildDefaultSchwarzContent(MPI_Comm comm, const SchwarzConfig& cfg)
   auto* pmeshA = new ParMesh(comm, smeshA);
   auto* pmeshB = new ParMesh(comm, smeshB);
 
-  content->sysA = InitThermalSystem(pmeshA, cfg.order, cfg.kappa);
-  content->sysB = InitThermalSystem(pmeshB, cfg.order, cfg.kappa);
+  content->sysA = support::Init_FEMSystem(pmeshA, cfg.order, cfg.kappa);
+  content->sysB = support::Init_FEMSystem(pmeshB, cfg.order, cfg.kappa);
 
-  content->tolA = DefaultTolX(*pmeshA);
-  content->tolB = DefaultTolX(*pmeshB);
+  content->tolA = support::DefaultTolX(*pmeshA);
+  content->tolB = support::DefaultTolX(*pmeshB);
 
   FindXMinMaxBoundaryAttributes(*pmeshA, content->A_attr_xmin, content->A_attr_xmax);
   FindXMinMaxBoundaryAttributes(*pmeshB, content->B_attr_xmin, content->B_attr_xmax);
@@ -686,7 +583,7 @@ static SUNErrCode SubdomainA_Evolve(SUNStepper stepper,
     schwarz::Trace gB = C->gB_meta;
     schwarz::UnpackState(y, gA, gB);
 
-    schwarz::Trace G = schwarz::BlendTrace(gA, gB, C->cfg.omega);
+    //schwarz::Trace G = schwarz::BlendTrace(gA, gB, C->cfg.omega);
 
     *C->sysA.x = 0.0;
 
@@ -696,10 +593,10 @@ static SUNErrCode SubdomainA_Evolve(SUNStepper stepper,
 
     ApplyBoundaryTraceByAttr(*C->sysA.pmesh, *C->sysA.x,
                              C->A_attr_xmax,
-                             schwarz::TraceToPairTrace(G),
+                             schwarz::TraceToPairTrace(gB),
                              C->tolA);
 
-    SolveSystem(C->sysA,
+    support::SolveSystem(C->sysA,
                 C->cfg.solver_type,
                 C->cfg.prec_type,
                 C->cfg.rel_tol,
@@ -757,7 +654,7 @@ static SUNErrCode SubdomainB_Evolve(SUNStepper stepper,
                                 C->B_attr_xmax,
                                 C->cfg.T_right);
 
-    SolveSystem(C->sysB,
+    support::SolveSystem(C->sysB,
                 C->cfg.solver_type,
                 C->cfg.prec_type,
                 C->cfg.rel_tol,

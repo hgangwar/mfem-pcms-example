@@ -36,10 +36,10 @@ add_executable(oh_adapter_mask_test tests/test_oh_mask_with_adapter.cpp)
 target_link_libraries(oh_adapter_mask_test PUBLIC mfem pcms::pcms)
 
 ################### Mesh Operations #########################
-add_executable(describe describe.cpp)
+add_executable(describe utilities/describe.cpp)
 target_link_libraries(describe PUBLIC mfem pcms::pcms)
 
-add_executable(shift_mesh shift_mesh.cpp)
+add_executable(shift_mesh utilities/shift_mesh.cpp)
 target_link_libraries(shift_mesh PUBLIC mfem pcms::pcms)
 
 add_executable(test_tag_transfer tests/test_tag_transfer.cpp)
@@ -53,8 +53,6 @@ target_link_libraries(schwarz_coupling PUBLIC mfem)
 add_executable(thermo_coupling thermo_coupling.cpp)
 target_link_libraries(thermo_coupling PUBLIC mfem pcms::pcms)
 
-add_executable(mfem_solve mfem_solve.cpp)
-target_link_libraries(mfem_solve PUBLIC mfem)
 
 ################### SUNDIALS Schwartz Iterations #########################
 add_library(schwarz_sundial Schwarz_Sundial_Coupling.cpp)

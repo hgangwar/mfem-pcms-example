@@ -2,7 +2,7 @@
 // Created by gangwh on 12/1/25.
 //
 #include <mfem.hpp>
-#include <Omega_h_mesh.hpp>
+//#include <Omega_h_mesh.hpp>
 #ifndef PCMS_MFEM_COUPLING_SUPPORT_H
 #define PCMS_MFEM_COUPLING_SUPPORT_H
 
@@ -205,7 +205,7 @@ static void InitializeDirichletValues_Order1(const ParMesh& pmesh,
 // -----------------------------
 // Build FE system: -div(k grad T) = 0
 // -----------------------------
-FEMSystem Init_FEMSystem(ParMesh* pmesh, int order, double kappa_val)
+inline FEMSystem  Init_FEMSystem(ParMesh* pmesh, int order, double kappa_val)
 {
   FEMSystem sys;
   sys.pmesh = pmesh;
@@ -230,11 +230,25 @@ FEMSystem Init_FEMSystem(ParMesh* pmesh, int order, double kappa_val)
 
   return sys;
 }
+inline void  DestroyFEMSystem(FEMSystem& sys)
+{
+  delete sys.x;
+  delete sys.a;
+  delete sys.b;
+  delete sys.fes;
+  delete sys.fec;
 
+  sys.x = nullptr;
+  sys.a = nullptr;
+  sys.b = nullptr;
+  sys.fes = nullptr;
+  sys.fec = nullptr;
+  sys.pmesh = nullptr;
+}
 // -----------------------------
 // SolveSystem (low verbosity)
 // -----------------------------
-long SolveSystem(FEMSystem& sys, const std::string& solver_type,
+inline long SolveSystem(FEMSystem& sys, const std::string& solver_type,
                  const std::string& prec_type, double rel_tol, int max_iter)
 {
   OperatorPtr A;

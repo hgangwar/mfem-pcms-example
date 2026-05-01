@@ -2,7 +2,6 @@
 // Created by gangwh on 4/23/26.
 //
 #include "Schwarz_Sundial_Coupling.h"
-
 #include <mfem.hpp>
 #include <mpi.h>
 
@@ -83,12 +82,35 @@ int main(int argc, char* argv[])
       const double rmsA = RMSDiff(gA, gA_prev);
       const double rmsB = RMSDiff(gB, gB_prev);
 
+      // -----------------------------
+      // Check full FE solution against exact T(x,y)=270+30x
+      // -----------------------------
+      double rmsEA = 0.0, maxEA = 0.0;
+      double rmsEB = 0.0, maxEB = 0.0;
+
+      schwarz::ErrorToExact_270_30x(*content->sysA.pmesh,
+                                    *content->sysA.x,
+                                    rmsEA,
+                                    maxEA);
+
+      schwarz::ErrorToExact_270_30x(*content->sysB.pmesh,
+                                    *content->sysB.x,
+                                    rmsEB,
+                                    maxEB);
+
       if (rank == 0)
       {
-        std::cout << "iter=" << (k + 1)
+        std::cout << "\n iter=" << (k + 1)
                   << " tret=" << tret
                   << " rmsA=" << rmsA
                   << " rmsB=" << rmsB << '\n';
+
+        std::cout << "\nExact solution check: T(x,y) = 270 + 30x\n";
+        std::cout << "  A: RMS error = " << rmsEA
+                  << "  max error = " << maxEA << '\n';
+
+        std::cout << "  B: RMS error = " << rmsEB
+                  << "  max error = " << maxEB << '\n';
       }
 
       gA_prev = std::move(gA);
