@@ -15,11 +15,11 @@ find_package(SUNDIALS REQUIRED)
 find_program(BASH_EXECUTABLE NAMES bash REQUIRED)
 
 ################### MFEM SOLVERS #########################
-add_executable(fluxSolver fluxSolver.cpp)
-target_link_libraries(fluxSolver PUBLIC mfem pcms::pcms)
+#add_executable(fluxSolver fluxSolver.cpp)
+#target_link_libraries(fluxSolver PUBLIC mfem pcms::pcms)
 
-add_executable(thermalSolver thermalSolver.cpp)
-target_link_libraries(thermalSolver PUBLIC mfem pcms::pcms) 
+#add_executable(thermalSolver thermalSolver.cpp)
+#target_link_libraries(thermalSolver PUBLIC mfem pcms::pcms)
 
 add_executable(coupler mfem_pcms_coupling.cpp mfem_field_adapter.h)
 target_link_libraries(coupler PUBLIC mfem pcms::pcms)
@@ -35,6 +35,7 @@ target_link_libraries(mfem_adapter_mask_test PUBLIC mfem pcms::pcms)
 add_executable(oh_adapter_mask_test tests/test_oh_mask_with_adapter.cpp)
 target_link_libraries(oh_adapter_mask_test PUBLIC mfem pcms::pcms)
 
+
 ################### Mesh Operations #########################
 add_executable(describe utilities/describe.cpp)
 target_link_libraries(describe PUBLIC mfem pcms::pcms)
@@ -47,12 +48,15 @@ target_link_libraries(test_tag_transfer PUBLIC mfem pcms::pcms)
 
 ################### Schwartz Iterations #########################
 
-add_executable(schwarz_coupling schwarz_coupling.cpp)
+add_executable(schwarz_coupling tests/schwarz_coupling.cpp)
 target_link_libraries(schwarz_coupling PUBLIC mfem)
 
 add_executable(thermo_coupling thermo_coupling.cpp)
 target_link_libraries(thermo_coupling PUBLIC mfem pcms::pcms)
 
+# Full overlap, no mask coupling convergence test
+add_executable(coup_convg tests/test_coupling_convg.cpp)
+target_link_libraries(coup_convg PUBLIC mfem pcms::pcms)
 
 ################### SUNDIALS Schwartz Iterations #########################
 add_library(schwarz_sundial Schwarz_Sundial_Coupling.cpp)

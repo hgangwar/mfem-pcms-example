@@ -1,4 +1,4 @@
-#include "schwartz_coupling_support.h"
+#include "tests/schwartz_coupling_support.h"
 
 using pcms::Copy;
 using pcms::GO;
@@ -106,14 +106,13 @@ static void app_B(MPI_Comm comm, const std::string mesh_file,
   // Order of fes assumed
   int order = 1;
   mfem::Mesh mesh(mesh_file, 1, 1);
-
-  // for (int i = 0; i < mesh.GetNV(); i++) { mesh.GetVertex(i)[0] += 0.4; }
   ParMesh pmesh(comm, mesh);
 
   // States
   double T_right = 300.0;
   double left_bdr_x = 1;
   double right_bdr_x = 3;
+
   // Estimate tolerance for the mesh
   const double tol = support::DefaultTolX(pmesh);
 
@@ -207,11 +206,10 @@ void coupler(MPI_Comm comm, const std::string mesh_A_file,
   auto dim = mesh_A.dim();
   const auto nverts = mesh_A.nverts();
 
-  // Create Mesh for App B by shifting mesh_A
+  // Read Mesh for App B
   Omega_h::Mesh mesh_B(&lib);
   Omega_h::binary::read(mesh_B_file, world, &mesh_B);
-  // double dx = 0.4;
-  // support::shift_meshX(mesh_B, dx);
+
   dtype random_temp = 280;
   Omega_h::Read<dtype> init(nverts, random_temp); // init with random guess
   auto field_name = std::string("temp");

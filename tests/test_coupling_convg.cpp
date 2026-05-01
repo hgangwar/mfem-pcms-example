@@ -24,15 +24,16 @@
 #include <cmath>
 #include <mpi.h>
 #include "mfem.hpp"
-#include "mfem_field_adapter.h"
+#include "../include/support.h"
+#include "include/mfem_field_adapter.h"
 #include <Omega_h_mesh.hpp>
 #include <pcms/pcms.h>
 #include <pcms/types.h>
 #include <Omega_h_file.hpp>
 #include <Omega_h_for.hpp>
 #include <pcms/adapter/omega_h/omega_h_field.h>
-#include "test_support.h"
-#include "mfem_support.h"
+#include "include/test_support.h"
+#include "include/support.h"
 
 using pcms::Copy;
 using pcms::GO;
@@ -40,7 +41,7 @@ using pcms::Lagrange;
 using pcms::make_array_view;
 using pcms::MFEMFieldAdapter;
 using pcms::OmegaHFieldAdapter;
-
+using namespace support;
 using namespace std;
 namespace ts = test_support;
 
@@ -118,8 +119,8 @@ static void app_A(MPI_Comm comm, string mesh_file, string solver_type,
 {
   int order = 1;
   // Initialize the FEA System
-  mfem_support::FEMSystem fem =
-    mfem_support::Init_FEMSystem(comm, mesh_file, order, 'A');
+  support::FEMSystem fem =
+    support::Init_FEMSystem(comm, mesh_file, order, 'A');
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_name = {"client_A"};
   std::vector<string> field_name = {"temp"};
@@ -141,7 +142,7 @@ static void app_A(MPI_Comm comm, string mesh_file, string solver_type,
     auto curr_field = *fem.x;
     bool use_interior_bc =
       (itr != 1); // No need to apply internal BC for we don't have a soln yet
-    auto residual = mfem_support::SolveSystem(fem, solver_type, use_interior_bc,
+    auto residual = support::SolveSystem(fem, solver_type, use_interior_bc,
                                               prec_type, 1e-8, 500, 0);
     fem.x->Save("cube_step_1.sol");
 
@@ -177,8 +178,8 @@ static void app_B(MPI_Comm comm, string mesh_file, string solver_type,
   int order = 1;
 
   // Initialize the FEA System
-  mfem_support::FEMSystem fem =
-    mfem_support::Init_FEMSystem(comm, mesh_file, order, 'B');
+  support::FEMSystem fem =
+    support::Init_FEMSystem(comm, mesh_file, order, 'B');
 
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_name = {"client_B"};
@@ -204,7 +205,7 @@ static void app_B(MPI_Comm comm, string mesh_file, string solver_type,
 
     if (itr > 1 && flag == 0)
       break;
-    auto residual = mfem_support::SolveSystem(fem, solver_type, true, prec_type,
+    auto residual = support::SolveSystem(fem, solver_type, true, prec_type,
                                               1e-8, 500, 0);
 
     // Send from B to C
