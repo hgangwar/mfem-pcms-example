@@ -142,7 +142,7 @@ public:
       }
     }
 
-    return packed_size_;
+    return has_mask() ? packed_size_ : pfes_.GetTrueVSize();
   }
 
   // REQUIRED
@@ -207,15 +207,15 @@ public:
     PCMS_FUNCTION_TIMER;
     mfem::Array<HYPRE_BigInt> gids;
     pmesh_.GetGlobalVertexIndices(gids);
-    LO count = 0;
     if (has_mask()) {
-      std::vector<GO> filtered_gids(packed_size_);
+      std::vector<GO> filtered_gids;
+      filtered_gids.reserve(packed_size_);
       for (int i = 0; i < mask_storage_.Size(); ++i) {
         if (mask_view_(i) > 0) {
-          //filtered_gids[mask_view_(i) - 1] = static_cast<GO>(gids[i]);
           filtered_gids.push_back(static_cast<GO>(gids[i]));
         }
       }
+      PCMS_ALWAYS_ASSERT(filtered_gids.size() == static_cast<size_t>(packed_size_));
       return filtered_gids;
     }
     return {gids.begin(), gids.end()};
@@ -238,7 +238,9 @@ public:
     // we need to create a counter for local index0
     for (auto i = 0; i < vcoords.Size(); i += dim) {
       pcms::LO idx = i / dim;
-      if (mask_view_(idx) > 0) {
+      bool flag = has_mask();
+      printf("Mask flag: %d\n", flag );
+      if (!has_mask() || mask_view_(idx) > 0) {
         std::copy(vcoords.begin() + i, vcoords.begin() + i + dim,
                   coord.begin());
         auto dr = partition.GetDr(local_index, dim, coord);

@@ -1,5 +1,5 @@
-#include "tests/schwartz_coupling_support.h"
-
+#include "include/schwarz_coupling_support.h"
+#include "include/mfem_field_adapter.h"
 using pcms::Copy;
 using pcms::GO;
 using pcms::Lagrange;

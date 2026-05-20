@@ -1,4 +1,4 @@
-#include "../mfem_field_adapter.h"
+#include "../include/mfem_field_adapter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -7,6 +7,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "mfem.hpp"
@@ -36,7 +37,7 @@ std::string diagnose_order_or_value_mismatch(const std::vector<T>& expected,
   };
 
   bool same_order = true;
-  for (int i = 0; i < (int)expected.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(expected.size()); ++i) {
     if (!equal_val(expected[i], actual[i])) {
       same_order = false;
       break;
@@ -50,9 +51,9 @@ std::string diagnose_order_or_value_mismatch(const std::vector<T>& expected,
   std::vector<char> used(actual.size(), 0);
   bool same_multiset = true;
 
-  for (int i = 0; i < (int)expected.size(); ++i) {
+  for (int i = 0; i < static_cast<int>(expected.size()); ++i) {
     bool found = false;
-    for (int j = 0; j < (int)actual.size(); ++j) {
+    for (int j = 0; j < static_cast<int>(actual.size()); ++j) {
       if (!used[j] && equal_val(expected[i], actual[j])) {
         used[j] = 1;
         found = true;
@@ -69,20 +70,22 @@ std::string diagnose_order_or_value_mismatch(const std::vector<T>& expected,
     os << "Vectors contain the same values, but in different order.\n";
     os << "First few positional mismatches:\n";
     int shown = 0;
-    for (int i = 0; i < (int)expected.size() && shown < 10; ++i) {
+
+    for (int i = 0; i < static_cast<int>(expected.size()) && shown < 10; ++i) {
       if (!equal_val(expected[i], actual[i])) {
         os << "  idx " << i << ": expected=" << expected[i]
            << ", actual=" << actual[i] << "\n";
         ++shown;
       }
     }
+
     return os.str();
   }
 
   os << "Vectors differ in values, not just order.\n";
 
   int shown = 0;
-  for (int i = 0; i < (int)expected.size() && shown < 10; ++i) {
+  for (int i = 0; i < static_cast<int>(expected.size()) && shown < 10; ++i) {
     if (!equal_val(expected[i], actual[i])) {
       os << "  idx " << i << ": expected=" << expected[i]
          << ", actual=" << actual[i] << "\n";
@@ -90,14 +93,15 @@ std::string diagnose_order_or_value_mismatch(const std::vector<T>& expected,
     }
   }
 
-  for (int i = 0; i < (int)expected.size() && shown < 20; ++i) {
+  for (int i = 0; i < static_cast<int>(expected.size()) && shown < 20; ++i) {
     bool found = false;
-    for (int j = 0; j < (int)actual.size(); ++j) {
+    for (int j = 0; j < static_cast<int>(actual.size()); ++j) {
       if (equal_val(expected[i], actual[j])) {
         found = true;
         break;
       }
     }
+
     if (!found) {
       os << "  expected value not found in actual: " << expected[i] << "\n";
       ++shown;
@@ -112,18 +116,20 @@ bool is_close(T val1, T2 val2)
 {
   if constexpr (std::is_integral_v<T>) {
     return val1 == val2;
+  } else {
+    return std::fabs(val1 - val2) < 1e-16;
   }
-  return std::fabs(val1 - val2) < 1e-16;
 }
 
-#define TEST_ASSERT(cond, msg)                                                 \
-  do {                                                                         \
-    if (!(cond)) {                                                             \
-      std::cerr << "[FAIL] " << msg << std::endl;                              \
-      PCMS_ALWAYS_ASSERT(cond);                                                \
-    }                                                                          \
-  } while (0)
-
+#define TEST_ASSERT(cond, msg)                                               \
+    do {                                                                     \
+    if (!(cond)) {                                                           \
+    std::ostringstream _test_assert_os;                                      \
+    _test_assert_os << msg;                                                  \
+    std::cerr << "[FAIL] " << _test_assert_os.str() << std::endl;            \
+    PCMS_ALWAYS_ASSERT(cond);                                                \
+    }                                                                        \
+} while (0)
 mfem::Vector make_true_gf_data(const mfem::ParGridFunction& gf_data,
                                const mfem::ParFiniteElementSpace& pfes)
 {
@@ -158,10 +164,11 @@ void mark_box_attributes(mfem::Mesh& mesh)
     for (int i = 0; i < verts.Size(); ++i) {
       xc += mesh.GetVertex(verts[i])[0];
     }
-    xc /= verts.Size();
 
+    xc /= verts.Size();
     mesh.SetAttribute(e, (xc < 0.4) ? 1 : 2);
   }
+
   mesh.SetAttributes();
 }
 
@@ -170,11 +177,13 @@ std::vector<char> build_gid_membership_mask(const std::vector<T>& gids,
                                             int size)
 {
   std::vector<char> mask(size, 0);
+
   for (auto gid : gids) {
     TEST_ASSERT(gid >= 0 && gid < size,
                 "Adapter returned gid out of bounds for this test");
     mask[static_cast<int>(gid)] = 1;
   }
+
   return mask;
 }
 
@@ -182,6 +191,7 @@ template <typename T>
 void log_gid_stats(const std::vector<T>& gids, int rank)
 {
   std::ostringstream os;
+
   os << "[INFO][rank " << rank << "] GetGids stats\n";
   os << "  length = " << gids.size() << "\n";
 
@@ -192,10 +202,12 @@ void log_gid_stats(const std::vector<T>& gids, int rank)
   }
 
   auto [min_it, max_it] = std::minmax_element(gids.begin(), gids.end());
+
   os << "  min = " << *min_it << "\n";
   os << "  max = " << *max_it << "\n";
 
   const int preview = std::min<int>(10, gids.size());
+
   os << "  first " << preview << " gids = ";
   for (int i = 0; i < preview; ++i) {
     os << gids[i];
@@ -211,6 +223,21 @@ void log_gid_stats(const std::vector<T>& gids, int rank)
   std::cout << os.str() << std::flush;
 }
 
+bool parse_bool_arg(const std::string& arg, bool& value)
+{
+  if (arg == "true" || arg == "1" || arg == "on" || arg == "yes") {
+    value = true;
+    return true;
+  }
+
+  if (arg == "false" || arg == "0" || arg == "off" || arg == "no") {
+    value = false;
+    return true;
+  }
+
+  return false;
+}
+
 int main(int argc, char** argv)
 {
   MPI_Init(&argc, &argv);
@@ -218,18 +245,39 @@ int main(int argc, char** argv)
   int rank = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
+  int return_code = 0;
+
   {
-    if (argc < 2) {
+    if (argc < 3) {
       if (rank == 0) {
-        std::cerr << "Usage: " << argv[0] << " input.mesh\n";
+        std::cerr << "Usage: " << argv[0]
+                  << " input.mesh <true|false>\n";
       }
+
       MPI_Finalize();
       return 1;
     }
 
+    bool use_mask = false;
+    const std::string arg = argv[2];
+
+    if (!parse_bool_arg(arg, use_mask)) {
+      if (rank == 0) {
+        std::cerr << "Invalid boolean argument: " << arg << "\n";
+        std::cerr << "Expected one of: true, false, 1, 0, on, off, yes, no\n";
+      }
+
+      MPI_Finalize();
+      return 1;
+    }
+
+    if (rank == 0) {
+      std::cout << "[INFO] input mesh = " << argv[1] << "\n";
+      std::cout << "[INFO] use_mask = " << std::boolalpha << use_mask << "\n";
+    }
+
     const int dim = 2;
     const int order = 1;
-    const bool use_mask = true;
     const pcms::LO masked_attr = 1;
 
     // ------------------------------------------------------------
@@ -251,13 +299,19 @@ int main(int argc, char** argv)
                 "This test assumes H1 order 1 with vertex-aligned true dofs");
 
     mfem::Vector true_before(pfes.GetTrueVSize());
+
     for (int i = 0; i < true_before.Size(); ++i) {
       true_before[i] = 1000.0 + i;
     }
+
     set_true_gf_data(gf_data, pfes, true_before);
 
-    pcms::MFEMFieldAdapter adapter(std::string("mfem_field_adapter"), pmesh,
-                                   pfes, gf_data, use_mask, masked_attr);
+    pcms::MFEMFieldAdapter adapter(std::string("mfem_field_adapter"),
+                                   pmesh,
+                                   pfes,
+                                   gf_data,
+                                   use_mask,
+                                   masked_attr);
 
     std::vector<int> permutation;
 
@@ -265,34 +319,46 @@ int main(int argc, char** argv)
     // GID stats block
     // ============================================================
     auto gids_adapter = adapter.GetGids();
+
     TEST_ASSERT(!gids_adapter.empty(),
-                "GetGids returned empty vector for masked attribute 1");
+                use_mask ? "GetGids returned empty vector for masked mode"
+                         : "GetGids returned empty vector for unmasked mode");
+
+    if (!use_mask) {
+      TEST_ASSERT(gids_adapter.size() == static_cast<size_t>(pfes.GetTrueVSize()),
+                  "Unmasked mode failed: GetGids size should equal true vector size");
+    }
 
     log_gid_stats(gids_adapter, rank);
 
     // ============================================================
     // Serialization block
     // ============================================================
-    std::cout << "[INFO][rank " << rank << "] Starting serialization test...\n";
+    std::cout << "[INFO][rank " << rank << "] Starting serialization test with "
+              << (use_mask ? "mask" : "no mask") << "...\n";
 
     std::vector<double> buffer(gids_adapter.size());
 
     auto packed_size = adapter.Serialize(make_array_view(buffer),
                                          make_const_array_view(permutation));
 
-    TEST_ASSERT(
-      (size_t)packed_size == gids_adapter.size(),
-      "Serialization failed: packed size does not match adapter gid count");
+    printf(" Serialized size: %zu, Get gids size: %zu\n",
+           static_cast<size_t>(packed_size),
+           gids_adapter.size());
+
+    TEST_ASSERT(static_cast<size_t>(packed_size) == gids_adapter.size(),
+                "Serialization failed: packed size does not match adapter gid count");
 
     auto true_data_before = make_true_gf_data(gf_data, pfes);
 
-    for (int i = 0; i < (int)buffer.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(buffer.size()); ++i) {
       const int gid = static_cast<int>(gids_adapter[i]);
+
       TEST_ASSERT(gid >= 0 && gid < true_data_before.Size(),
                   "Serialization failed: adapter gid out of bounds");
+
       TEST_ASSERT(is_close(buffer[i], true_data_before[gid]),
-                  "Serialization failed: packed buffer value does not match "
-                  "true data at adapter gid");
+                  "Serialization failed: packed buffer value does not match true data");
     }
 
     std::cout << "[PASS][rank " << rank << "] Serialization test passed.\n";
@@ -300,11 +366,12 @@ int main(int argc, char** argv)
     // ============================================================
     // Deserialization block
     // ============================================================
-    std::cout << "[INFO][rank " << rank
-              << "] Starting deserialization test...\n";
+    std::cout << "[INFO][rank " << rank << "] Starting deserialization test with "
+              << (use_mask ? "mask" : "no mask") << "...\n";
 
     std::vector<double> modified = buffer;
-    for (int i = 0; i < (int)modified.size(); ++i) {
+
+    for (int i = 0; i < static_cast<int>(modified.size()); ++i) {
       modified[i] = -10.0 * modified[i];
     }
 
@@ -312,37 +379,62 @@ int main(int argc, char** argv)
                         make_const_array_view(permutation));
 
     auto true_data_after = make_true_gf_data(gf_data, pfes);
-    auto is_masked =
+
+    auto is_selected =
       build_gid_membership_mask(gids_adapter, true_data_after.Size());
 
-    for (int i = 0; i < true_data_after.Size(); ++i) {
-      if (!is_masked[i]) {
-        TEST_ASSERT(is_close(true_data_after[i], true_before[i]),
-                    "Deserialization failed: unmasked entry was modified");
+    if (use_mask) {
+      // Masked mode:
+      // Only entries returned by GetGids() should be modified.
+      for (int i = 0; i < true_data_after.Size(); ++i) {
+        if (!is_selected[i]) {
+          TEST_ASSERT(is_close(true_data_after[i], true_before[i]),
+                      "Masked deserialization failed: unmasked entry was modified");
+        }
+      }
+    } else {
+      // Unmasked mode:
+      // Every true DOF should be selected and therefore eligible for modification.
+      for (int i = 0; i < true_data_after.Size(); ++i) {
+        TEST_ASSERT(is_selected[i],
+                    "Unmasked deserialization failed: not all true DOFs were selected");
       }
     }
 
     std::vector<double> roundtrip(gids_adapter.size());
-    auto roundtrip_size = adapter.Serialize(make_array_view(roundtrip),
-                                            make_const_array_view(permutation));
 
-    TEST_ASSERT((size_t)roundtrip_size == gids_adapter.size(),
+    auto roundtrip_size =
+      adapter.Serialize(make_array_view(roundtrip),
+                        make_const_array_view(permutation));
+
+    TEST_ASSERT(static_cast<size_t>(roundtrip_size) == gids_adapter.size(),
                 "Deserialization failed: roundtrip serialize size mismatch");
 
     std::string diag = diagnose_order_or_value_mismatch(modified, roundtrip);
+
     TEST_ASSERT(diag == "Vectors match: same values in same order.",
                 "Deserialization failed: " << diag);
 
-    for (int i = 0; i < (int)gids_adapter.size(); ++i) {
+    for (int i = 0; i < static_cast<int>(gids_adapter.size()); ++i) {
       const int gid = static_cast<int>(gids_adapter[i]);
+
+      TEST_ASSERT(gid >= 0 && gid < true_data_after.Size(),
+                  "Deserialization failed: adapter gid out of bounds");
+
       TEST_ASSERT(is_close(true_data_after[gid], roundtrip[i]),
                   "Deserialization failed: true data at adapter gid does not "
                   "match roundtrip packed value");
     }
 
     std::cout << "[PASS][rank " << rank << "] Deserialization test passed.\n";
+
+    if (rank == 0) {
+      std::cout << "[PASS] MFEMFieldAdapter "
+                << (use_mask ? "masked" : "unmasked")
+                << " serialization/deserialization test passed.\n";
+    }
   }
 
   MPI_Finalize();
-  return 0;
+  return return_code;
 }

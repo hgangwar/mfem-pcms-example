@@ -18,12 +18,12 @@ int main(int argc, char** argv) {
     Omega_h::Mesh mesh = Omega_h::build_box(
       lib.world(),
       OMEGA_H_SIMPLEX,
-      0.6, 1.0, 0.0,
+      0.1, 1.0, 0.0,
       nx,  ny,  0
     );
 
     // Write .osh
-    Omega_h::binary::write("box_tri.osh", &mesh);
+    Omega_h::binary::write("cube.osh", &mesh);
   }
   MPI_Finalize();
   return 0;

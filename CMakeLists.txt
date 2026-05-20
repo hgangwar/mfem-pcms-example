@@ -11,6 +11,9 @@ find_package(Omega_h REQUIRED)
 find_package(MFEM REQUIRED)
 find_package(pcms REQUIRED)
 find_package(SUNDIALS REQUIRED)
+
+find_package(MPI REQUIRED)
+
 #find_package(Gmsh REQUIRED)
 find_program(BASH_EXECUTABLE NAMES bash REQUIRED)
 
@@ -21,7 +24,7 @@ find_program(BASH_EXECUTABLE NAMES bash REQUIRED)
 #add_executable(thermalSolver thermalSolver.cpp)
 #target_link_libraries(thermalSolver PUBLIC mfem pcms::pcms)
 
-add_executable(coupler mfem_pcms_coupling.cpp mfem_field_adapter.h)
+add_executable(coupler mfem_pcms_coupling.cpp include/mfem_field_adapter.h)
 target_link_libraries(coupler PUBLIC mfem pcms::pcms)
 
 ################### MFEM ADAPTER #########################
@@ -72,36 +75,19 @@ target_link_libraries(schwarz_sundial PUBLIC
         ${SUNDIALS_ROOT}/lib64/libsundials_arkode.so
 )
 add_executable(stepper Sunstepper.cpp)
+
 target_link_libraries(stepper PUBLIC schwarz_sundial)
 
-add_executable( ptn_stepper Partitioned_stepper.cpp)
-target_link_libraries( ptn_stepper PUBLIC schwarz_sundial)
+add_executable(pcms_sun_driver
+        test_pcms_sundial.cpp
+)
 
-# add this to enable testing
-enable_testing()
+target_link_libraries(pcms_sun_driver PUBLIC
+        mfem
+        pcms::pcms
+        schwarz_sundial
+)
 
-# add the mfem_adapter_unit_test as a test
-#add_test(
-#  NAME mfem_adapter_unit_test
-#  COMMAND $<TARGET_FILE:mfem_adapter_unit_test>
-#)
 
-# add the test_mfem_coupling as a test
-#add_test(
-#  NAME test_mfem_coupling 
-#  COMMAND $<TARGET_FILE:test_mfem_coupling>
-#)
 
-# add the test_mfem_coupling as a test using the bash script
-#add_test(
-#  NAME test_mfem_coupling 
-#  COMMAND ${BASH_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_mfem_coupling_bash_commands.sh $<TARGET_FILE:test_mfem_coupling>
-#)
-find_package(MPI REQUIRED)
-
-#add_test(
-#  NAME test_mfem_coupling
-#  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 4
-#          ${CMAKE_CURRENT_BINARY_DIR}/test_mfem_coupling
-#)
 

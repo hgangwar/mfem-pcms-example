@@ -24,16 +24,15 @@
 #include <cmath>
 #include <mpi.h>
 #include "mfem.hpp"
-#include "../include/support.h"
-#include "include/mfem_field_adapter.h"
+#include "../include/schwarz_coupling_support.h"
+#include "../include/mfem_field_adapter.h"
 #include <Omega_h_mesh.hpp>
 #include <pcms/pcms.h>
-#include <pcms/types.h>
+#include <pcms/utility/types.h>
 #include <Omega_h_file.hpp>
 #include <Omega_h_for.hpp>
-#include <pcms/adapter/omega_h/omega_h_field.h>
-#include "include/test_support.h"
-#include "include/support.h"
+#include "../include/test_support.h"
+
 
 using pcms::Copy;
 using pcms::GO;
@@ -82,45 +81,18 @@ struct Coupling
   bool isServer = false;
 };
 
-//--------------------------------------------------------------
-// Init_Coupler<TAdapter>
-//--------------------------------------------------------------
-template <typename Adapter_type>
-Coupling Init_Coupler(MPI_Comm comm, const std::string& name,
-                      const std::vector<std::string>& app_names,
-                      const std::vector<std::string>& field_names,
-                      bool isServer, const redev::Partition ptn,
-                      Adapter_type Adapter)
-{
-  Coupling cp;
-  cp.name = name;
-  cp.app_names = app_names;
-  cp.field_names = field_names;
-  cp.isServer = isServer;
 
-  if (app_names.size() != field_names.size())
-    throw std::runtime_error(
-      "Mismatch: app_names and field_names must be of the same size.");
-  if (isServer)
-    cp.cpl = std::make_unique<pcms::Coupler>(name, comm, isServer, ptn);
-  else
-    cp.cpl = std::make_unique<pcms::Coupler>(name, comm, isServer, ptn);
-
-  for (size_t i = 0; i < app_names.size(); ++i) {
-    auto* app = cp.cpl->AddApplication(app_names[i]);
-    cp.fields[app_names[i]] = app->AddField(field_names[i], Adapter);
-    cp.apps[app_names[i]] = app;
-  }
-  return cp;
-}
 
 static void app_A(MPI_Comm comm, string mesh_file, string solver_type,
                   string prec_type)
 {
   int order = 1;
+  int kappa = 1;
+  mfem::Mesh mesh(mesh_file, 1, 1);
+  ParMesh pmesh(comm, mesh);
   // Initialize the FEA System
   support::FEMSystem fem =
-    support::Init_FEMSystem(comm, mesh_file, order, 'A');
+    support::Init_FEMSystem(&pmesh, order, kappa);
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_name = {"client_A"};
   std::vector<string> field_name = {"temp"};
@@ -142,9 +114,8 @@ static void app_A(MPI_Comm comm, string mesh_file, string solver_type,
     auto curr_field = *fem.x;
     bool use_interior_bc =
       (itr != 1); // No need to apply internal BC for we don't have a soln yet
-    auto residual = support::SolveSystem(fem, solver_type, use_interior_bc,
-                                              prec_type, 1e-8, 500, 0);
-    fem.x->Save("cube_step_1.sol");
+    auto residual = support::SolveSystem(fem, solver_type,
+                                              prec_type, 1e-8, 500);
 
     //  Send from A to C
     client.apps["client_A"]->BeginSendPhase();
@@ -168,7 +139,6 @@ static void app_A(MPI_Comm comm, string mesh_file, string solver_type,
     flag = gdi->Receive("flag", 1)[0];
     client.apps["client_A"]->EndReceivePhase();
     itr++;
-    fem.x->Save("cube_step_5.sol");
   } while (flag);
 }
 
@@ -176,10 +146,12 @@ static void app_B(MPI_Comm comm, string mesh_file, string solver_type,
                   string prec_type)
 {
   int order = 1;
-
+  int kappa = 1;
+  mfem::Mesh mesh(mesh_file, 1, 1);
+  ParMesh pmesh(comm, mesh);
   // Initialize the FEA System
   support::FEMSystem fem =
-    support::Init_FEMSystem(comm, mesh_file, order, 'B');
+    support::Init_FEMSystem(&pmesh, order, kappa);
 
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_name = {"client_B"};
@@ -197,7 +169,7 @@ static void app_B(MPI_Comm comm, string mesh_file, string solver_type,
   auto gdi = client.apps["client_B"]->Add_GDI<pcms::GO>("global_comm", comm);
   GO residual = 0;
   do {
-    fem.x->Save("cube_step_3.sol");
+
     // Receive from C to B
     client.apps["client_B"]->BeginReceivePhase();
     client.fields["client_B"]->Receive();
@@ -205,8 +177,8 @@ static void app_B(MPI_Comm comm, string mesh_file, string solver_type,
 
     if (itr > 1 && flag == 0)
       break;
-    auto residual = support::SolveSystem(fem, solver_type, true, prec_type,
-                                              1e-8, 500, 0);
+    auto residual = support::SolveSystem(fem, solver_type, prec_type,
+                                              1e-8, 500);
 
     // Send from B to C
     client.apps["client_B"]->BeginSendPhase();
@@ -259,11 +231,12 @@ void coupler(MPI_Comm comm, std::string mesh_file)
   std::string coupler_name = "mfem_coupler";
   std::vector<string> app_names = {"client_A", "client_B"};
   std::vector<string> field_names = {"temp", "temp"};
-
+  string field_name = "temp";
+  auto adapter = OmegaHFieldAdapter<dtype>(field_name, mesh, is_overlap);
   // Initialize coupling interface
   auto server =
     Init_Coupler(comm, coupler_name, app_names, field_names, true, partition,
-                 OmegaHFieldAdapter<pcms::Real>("temp", mesh, is_overlap));
+                 adapter);
 
   // Initialize global comm on the app
   auto gdi_A = server.apps["client_A"]->Add_GDI<pcms::GO>("global_comm", comm);
@@ -286,7 +259,6 @@ void coupler(MPI_Comm comm, std::string mesh_file)
     printf("received residual at coupler from A=%g\n", residual);
     server.apps["client_A"]->EndReceivePhase();
 
-    ts::writeVtk(mesh, "cube_step_", 2);
 
     // --- after update: read new field values
     auto field_AC = mesh.get_array<pcms::Real>(0, "temp");
@@ -356,9 +328,6 @@ int main(int argc, char* argv[])
       case -1: coupler(comm, meshFile); break;
       case 0: app_A(comm, meshFile, argv[3], argv[4]); break;
       case 1: app_B(comm, meshFile, argv[3], argv[4]); break;
-      default:
-        std::cerr << "Unhandled client id (should be -1, 0,1)\n";
-        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
   }
   MPI_Finalize();

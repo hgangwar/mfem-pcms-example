@@ -1,7 +1,7 @@
 //
 // Created by gangwh on 4/23/26.
 //
-#include "Schwarz_Sundial_Coupling.h"
+#include "include/Schwarz_Sundial_Coupling.h"
 #include <mfem.hpp>
 #include <mpi.h>
 
