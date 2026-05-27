@@ -78,7 +78,7 @@ public:
     packed_size_ = count;
     hasmask_ = (packed_size_ > 0);
 
-    printf("Filtered %d unique vertices.\n", packed_size_);
+    //printf("Filtered %d unique vertices.\n", packed_size_);
 
     mask_view_ = Rank1View<pcms::LO, Kokkos::HostSpace>(mask_storage_.GetData(),
                                                         mask_storage_.Size());
@@ -106,8 +106,8 @@ public:
       R->Mult(gf_data_, serialized_data);
       pcms::LO filtered_size = has_mask() ? packed_size_ : pfes_.GetTrueVSize();
       mfem::Vector filtered_data(filtered_size);
-      printf("\n Size of filtered_data : %d, mask size: %d\n",
-             filtered_data.Size(), this->mask_storage_.Size());
+      //printf("\n Size of filtered_data : %d, mask size: %d\n",
+      //       filtered_data.Size(), this->mask_storage_.Size());
 
       if (has_mask()) {
         for (pcms::LO i = 0; i < serialized_data.Size(); ++i) {
@@ -239,14 +239,12 @@ public:
     for (auto i = 0; i < vcoords.Size(); i += dim) {
       pcms::LO idx = i / dim;
       bool flag = has_mask();
-      printf("Mask flag: %d\n", flag );
       if (!has_mask() || mask_view_(idx) > 0) {
         std::copy(vcoords.begin() + i, vcoords.begin() + i + dim,
                   coord.begin());
         auto dr = partition.GetDr(local_index, dim, coord);
         reverse_partition[dr].emplace_back(
-          local_index++); // it should be some counter since it is going 3 at a
-                          // time
+          local_index++);
       }
     }
     int counter = 0;

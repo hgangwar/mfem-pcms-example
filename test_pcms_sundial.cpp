@@ -19,7 +19,7 @@
 #include <map>
 #include <memory>
 #include <stdexcept>
-
+#include <limits>
 #include <mpi.h>
 
 #include "mfem.hpp"
@@ -59,7 +59,6 @@ struct Coupling
   std::map<std::string, pcms::CoupledField*> fields;
   bool isServer = false;
 };
-
 template <typename Adapter_type>
 Coupling Init_Coupler(MPI_Comm comm,
                       const std::string& name,
@@ -67,37 +66,192 @@ Coupling Init_Coupler(MPI_Comm comm,
                       const std::vector<std::string>& field_names,
                       bool isServer,
                       const redev::Partition ptn,
-                      Adapter_type& Adapter)
+                      Adapter_type& adapter)
 {
+  if (app_names.size() != field_names.size())
+    throw std::runtime_error("app_names and field_names size mismatch.");
+
+  if (app_names.size() != 1)
+    throw std::runtime_error(
+        "This Init_Coupler overload expects exactly one application.");
+
   Coupling cp;
   cp.name = name;
   cp.app_names = app_names;
   cp.field_names = field_names;
   cp.isServer = isServer;
 
+  cp.cpl = std::make_unique<pcms::Coupler>(name, comm, isServer, ptn);
+
+  auto* app = cp.cpl->AddApplication(app_names[0]);
+
+  cp.fields[app_names[0]] =
+      app->AddField(field_names[0], std::move(adapter));
+
+  cp.apps[app_names[0]] = app;
+
+  return cp;
+}
+template <typename dtype>
+Coupling Init_Coupler_OH(MPI_Comm comm,
+                                    const std::string& name,
+                                    const std::vector<std::string>& app_names,
+                                    const std::vector<std::string>& field_names,
+                                    bool isServer,
+                                    const redev::Partition ptn,
+                                    Omega_h::Mesh& mesh,
+                                    const Omega_h::Write<Omega_h::I8> is_overlap)
+{
   if (app_names.size() != field_names.size())
-  {
+    throw std::runtime_error("app_names and field_names size mismatch.");
+
+  if (app_names.size() != 2)
     throw std::runtime_error(
-        "Mismatch: app_names and field_names must be of the same size.");
-  }
+        "This Init_Coupler_With_Adapters overload expects exactly two applications.");
+
+  Coupling cp;
+  cp.name = name;
+  cp.app_names = app_names;
+  cp.field_names = field_names;
+  cp.isServer = isServer;
 
   cp.cpl = std::make_unique<pcms::Coupler>(name, comm, isServer, ptn);
 
-  for (size_t i = 0; i < app_names.size(); ++i)
+  for (size_t i = 0; i < 2; ++i)
   {
     auto* app = cp.cpl->AddApplication(app_names[i]);
-    cp.fields[app_names[i]] = app->AddField(field_names[i], std::move(Adapter));
+    auto adapter = OmegaHFieldAdapter<dtype>(cp.field_names[i], mesh, is_overlap);
+
+    cp.fields[app_names[i]] =
+        app->AddField(field_names[i], std::move(adapter));
+
     cp.apps[app_names[i]] = app;
   }
 
   return cp;
 }
 
+static void PrintGridFunctionSummary(const std::string& label,
+                                     const mfem::GridFunction& gf,
+                                     MPI_Comm comm,
+                                     int max_print = 8)
+{
+  int rank = 0;
+  MPI_Comm_rank(comm, &rank);
+
+  double local_min = std::numeric_limits<double>::infinity();
+  double local_max = -std::numeric_limits<double>::infinity();
+  double local_sum = 0.0;
+
+  for (int i = 0; i < gf.Size(); ++i)
+  {
+    const double v = gf(i);
+    local_min = std::min(local_min, v);
+    local_max = std::max(local_max, v);
+    local_sum += v;
+  }
+
+  double global_min = 0.0;
+  double global_max = 0.0;
+  double global_sum = 0.0;
+  int global_size = 0;
+
+  const int local_size = gf.Size();
+
+  MPI_Allreduce(&local_min, &global_min, 1, MPI_DOUBLE, MPI_MIN, comm);
+  MPI_Allreduce(&local_max, &global_max, 1, MPI_DOUBLE, MPI_MAX, comm);
+  MPI_Allreduce(&local_sum, &global_sum, 1, MPI_DOUBLE, MPI_SUM, comm);
+  MPI_Allreduce(&local_size, &global_size, 1, MPI_INT, MPI_SUM, comm);
+
+  const double global_mean =
+      global_size > 0 ? global_sum / static_cast<double>(global_size) : 0.0;
+
+  if (rank == 0)
+  {
+    std::cout << label
+              << " global_size=" << global_size
+              << " min=" << global_min
+              << " max=" << global_max
+              << " mean=" << global_mean
+              << std::endl;
+  }
+
+  std::cout << "[rank " << rank << "] "
+            << label
+            << " local_size=" << local_size
+            << " first=[";
+
+  const int nprint = std::min(max_print, local_size);
+
+  for (int i = 0; i < nprint; ++i)
+  {
+    std::cout << gf(i);
+    if (i + 1 < nprint) std::cout << ", ";
+  }
+
+  std::cout << "]" << std::endl;
+}
+
+static void PrintVectorSummary(const std::string& label,
+                               const std::vector<double>& v,
+                               size_t max_print = 8)
+{
+  double minv = std::numeric_limits<double>::infinity();
+  double maxv = -std::numeric_limits<double>::infinity();
+  double sum = 0.0;
+
+  for (double x : v)
+  {
+    minv = std::min(minv, x);
+    maxv = std::max(maxv, x);
+    sum += x;
+  }
+
+  const double mean = v.empty() ? 0.0 : sum / static_cast<double>(v.size());
+
+  std::cout << label
+            << " size=" << v.size()
+            << " min=" << minv
+            << " max=" << maxv
+            << " mean=" << mean
+            << " first=[";
+
+  const size_t nprint = std::min(max_print, v.size());
+
+  for (size_t i = 0; i < nprint; ++i)
+  {
+    std::cout << v[i];
+    if (i + 1 < nprint)
+      std::cout << ", ";
+  }
+
+  std::cout << "]" << std::endl;
+}
 static void CopyNVector(N_Vector src, N_Vector dst)
 {
   N_VScale(SUN_RCONST(1.0), src, dst);
 }
+static std::vector<double> ExtractNVectorBlock(N_Vector y,
+                                               int block_id,
+                                               size_t block_size)
+{
+  std::vector<double> out(block_size);
 
+  double* data = N_VGetArrayPointer(y);
+  if (!data)
+  {
+    throw std::runtime_error("ExtractNVectorBlock: N_Vector data pointer is null.");
+  }
+
+  const size_t offset = static_cast<size_t>(block_id) * block_size;
+
+  for (size_t i = 0; i < block_size; ++i)
+  {
+    out[i] = data[offset + i];
+  }
+
+  return out;
+}
 static double BlockRMSDiff(N_Vector y,
                            N_Vector y_old,
                            int block,
@@ -179,20 +333,31 @@ static SUNErrCode CouplerStepper_Evolve(SUNStepper stepper,
 
   try
   {
+    //while (C->nsteps<3)
     while (C->tcur < tout && C->tcur < C->tstop && !C->converged)
     {
       CopyNVector(y, C->yold);
 
-      // Multiplicative Schwarz / Gauss-Seidel style PCMS exchange:
-      // A: solve -> send -> receive -> flag
-      // B: receive -> solve -> send -> flag
+      printf("A -> receive -> C\n");
       C->recv_A_field();
+
       C->pack_A_block(y);
 
+      PrintVectorSummary(
+          "[coupler] after pack_A_block, y[A block]",
+          ExtractNVectorBlock(y, 0, C->nverts));
+
+      printf("C -> send -> B\n");
       C->send_A_field_to_B();
 
+      printf("B -> receive -> C\n");
       C->recv_B_field();
+
       C->pack_B_block(y);
+
+      PrintVectorSummary(
+          "[coupler] after pack_B_block, y[B block]",
+          ExtractNVectorBlock(y, 1, C->nverts));
 
       C->rmsA = BlockRMSDiff(y, C->yold, 0, C->nverts);
       C->rmsB = BlockRMSDiff(y, C->yold, 1, C->nverts);
@@ -201,6 +366,14 @@ static SUNErrCode CouplerStepper_Evolve(SUNStepper stepper,
       C->converged = (max_rms < C->tol);
 
       GO flag = C->converged ? 0 : 1;
+
+      printf("[coupler] itr=%ld tret=%g rms_A_sun=%g rms_B_sun=%g max_rms_sun=%g converged=%d\n",
+             static_cast<long>(C->nsteps + 1),
+             static_cast<double>(C->tcur + C->dt),
+             C->rmsA,
+             C->rmsB,
+             max_rms,
+             static_cast<int>(C->converged));
 
       C->send_B_field_to_A();
 
@@ -211,13 +384,27 @@ static SUNErrCode CouplerStepper_Evolve(SUNStepper stepper,
       C->nsteps++;
     }
 
-    if (tret) { *tret = C->tcur; }
+    if (tret)
+    {
+      *tret = C->tcur;
+    }
 
     SUNStepper_SetLastFlag(stepper, SUN_SUCCESS);
     return SUN_SUCCESS;
   }
+  catch (const std::exception& e)
+  {
+    std::cerr << "[coupler] CouplerStepper_Evolve failed: "
+              << e.what() << std::endl;
+
+    SUNStepper_SetLastFlag(stepper, SUN_ERR_EXT_FAIL);
+    return SUN_ERR_EXT_FAIL;
+  }
   catch (...)
   {
+    std::cerr << "[coupler] CouplerStepper_Evolve failed with unknown exception."
+              << std::endl;
+
     SUNStepper_SetLastFlag(stepper, SUN_ERR_EXT_FAIL);
     return SUN_ERR_EXT_FAIL;
   }
@@ -347,8 +534,23 @@ static void app_A(MPI_Comm comm,
   while (flag)
   {
     // A sends first.
+    std::cout << "[client_A] itr=" << itr << " before solve" << std::endl;
+
+    PrintGridFunctionSummary(
+        "[client_A] fem.x BEFORE solve",
+        *fem.x,
+        comm);
     const auto residual =
         support::SolveSystem(fem, solver_type, prec_type, 1e-8, 500);
+    PrintGridFunctionSummary(
+      "[client_A] fem.x AFTER solve / BEFORE send",
+      *fem.x,
+      comm);
+
+    std::cout << "[client_A] itr=" << itr
+              << " residual=" << residual
+              << " sending field to coupler"
+              << std::endl;
 
     client.apps["client_A"]->BeginSendPhase();
     client.fields["client_A"]->Send();
@@ -461,9 +663,8 @@ static void coupler(MPI_Comm comm,
   const std::vector<std::string> app_names = {"client_A", "client_B"};
   const std::vector<std::string> field_names = {"temp", "temp"};
 
-  auto adapter = OmegaHFieldAdapter<dtype>("temp", mesh, is_overlap);
   auto server =
-      Init_Coupler(comm, coupler_name, app_names, field_names, true, partition, adapter);
+      Init_Coupler_OH<dtype>(comm, coupler_name, app_names, field_names, true, partition, mesh, is_overlap);
 
   auto gdi_A = server.apps["client_A"]->Add_GDI<pcms::GO>("global_comm", comm);
   auto gdi_B = server.apps["client_B"]->Add_GDI<pcms::GO>("global_comm", comm);

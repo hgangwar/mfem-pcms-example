@@ -246,42 +246,47 @@ inline void  DestroyFEMSystem(FEMSystem& sys)
   sys.pmesh = nullptr;
 }
 // -----------------------------
-// SolveSystem (low verbosity)
+// SolveSystem
 // -----------------------------
-inline long SolveSystem(FEMSystem& sys, const std::string& solver_type,
-                 const std::string& prec_type, double rel_tol, int max_iter)
+inline double SolveSystem(FEMSystem &sys,
+                          const std::string &solver_type,
+                          const std::string &prec_type,
+                          double rel_tol,
+                          int max_iter)
 {
   OperatorPtr A;
   HypreParVector X, B;
 
   sys.a->FormLinearSystem(sys.ess_tdofs, *sys.x, *sys.b, A, X, B);
-  auto* A_hypre = A.As<HypreParMatrix>();
+
+  auto *A_hypre = A.As<HypreParMatrix>();
   MFEM_VERIFY(A_hypre, "FormLinearSystem did not produce HypreParMatrix.");
 
   std::unique_ptr<Solver> prec;
-  if (prec_type == "HypreAMG") {
+  if (prec_type == "HypreAMG")
+  {
     auto amg = std::make_unique<HypreBoomerAMG>(*A_hypre);
     amg->SetPrintLevel(0);
     prec = std::move(amg);
-  } else if (prec_type == "Jacobi") {
+  }
+  else if (prec_type == "Jacobi")
+  {
     auto sm = std::make_unique<HypreSmoother>(*A_hypre);
     sm->SetType(HypreSmoother::Jacobi);
     prec = std::move(sm);
-  } else {
+  }
+  else
+  {
     MFEM_ABORT("Unknown preconditioner.");
   }
 
   std::unique_ptr<IterativeSolver> solver;
   MPI_Comm comm = sys.fes->GetParMesh()->GetComm();
 
-  if (solver_type == "CG")
-    solver = std::make_unique<CGSolver>(comm);
-  else if (solver_type == "MINRES")
-    solver = std::make_unique<MINRESSolver>(comm);
-  else if (solver_type == "GMRES")
-    solver = std::make_unique<GMRESSolver>(comm);
-  else
-    MFEM_ABORT("Unknown solver.");
+  if (solver_type == "CG")          solver = std::make_unique<CGSolver>(comm);
+  else if (solver_type == "MINRES") solver = std::make_unique<MINRESSolver>(comm);
+  else if (solver_type == "GMRES")  solver = std::make_unique<GMRESSolver>(comm);
+  else MFEM_ABORT("Unknown solver.");
 
   solver->SetOperator(*A_hypre);
   solver->SetPreconditioner(*prec);
