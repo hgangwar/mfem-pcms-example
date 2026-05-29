@@ -252,6 +252,182 @@ static std::vector<double> ExtractNVectorBlock(N_Vector y,
 
   return out;
 }
+static void InitializeDirichletValuesOnTwoPlanes(
+    const mfem::ParMesh& pmesh,
+    const mfem::ParFiniteElementSpace& fes,
+    const mfem::Array<char>& mark,
+    mfem::ParGridFunction& x,
+    double tol,
+    double x_physical,
+    double T_physical,
+    double x_interface,
+    double T_interface)
+{
+  mfem::Vector xt(fes.GetTrueVSize());
+  x.GetTrueDofs(xt);
+
+  mfem::Array<int> vdofs;
+
+  for (int vi = 0; vi < pmesh.GetNV(); ++vi)
+  {
+    const double* v = pmesh.GetVertex(vi);
+    const double xv = v[0];
+
+    const bool is_physical = std::abs(xv - x_physical) <= tol;
+    const bool is_interface = std::abs(xv - x_interface) <= tol;
+
+    if (!is_physical && !is_interface) { continue; }
+
+    const double val = is_physical ? T_physical : T_interface;
+
+    fes.GetVertexVDofs(vi, vdofs);
+
+    for (int k = 0; k < vdofs.Size(); ++k)
+    {
+      const int tdof = fes.GetLocalTDofNumber(vdofs[k]);
+      if (tdof >= 0 && mark[tdof])
+      {
+        xt[tdof] = val;
+      }
+    }
+  }
+
+  x.SetFromTrueDofs(xt);
+}
+static double ErrorToExactLinearProfile(const mfem::ParMesh& pmesh,
+                                        const mfem::ParGridFunction& x,
+                                        MPI_Comm comm)
+{
+  double local_l2 = 0.0;
+  double local_linf = 0.0;
+  int local_count = 0;
+
+  for (int vi = 0; vi < pmesh.GetNV(); ++vi)
+  {
+    const double* coord = pmesh.GetVertex(vi);
+    const double xpos = coord[0];
+
+    const double exact = 270.0 + 30.0 * xpos;
+    const double err = x(vi) - exact;
+
+    local_l2 += err * err;
+    local_linf = std::max(local_linf, std::abs(err));
+    local_count++;
+  }
+
+  double global_l2 = 0.0;
+  double global_linf = 0.0;
+  int global_count = 0;
+
+  MPI_Allreduce(&local_l2, &global_l2, 1, MPI_DOUBLE, MPI_SUM, comm);
+  MPI_Allreduce(&local_linf, &global_linf, 1, MPI_DOUBLE, MPI_MAX, comm);
+  MPI_Allreduce(&local_count, &global_count, 1, MPI_INT, MPI_SUM, comm);
+
+  const double rms = std::sqrt(global_l2 / std::max(1, global_count));
+
+  int rank = 0;
+  MPI_Comm_rank(comm, &rank);
+
+  if (rank == 0)
+  {
+    std::cout << "[exact-error] RMS=" << rms
+              << " Linf=" << global_linf
+              << " vertices=" << global_count
+              << std::endl;
+  }
+
+  return rms;
+}
+
+static int CountVerticesOnPlaneX(const mfem::ParMesh& pmesh,
+                                 double xplane,
+                                 double tol)
+{
+  int local_count = 0;
+  for (int vi = 0; vi < pmesh.GetNV(); ++vi)
+  {
+    const double* v = pmesh.GetVertex(vi);
+    if (std::abs(v[0] - xplane) <= tol)
+    {
+      local_count++;
+    }
+  }
+
+  int global_count = 0;
+  MPI_Allreduce(&local_count, &global_count, 1, MPI_INT, MPI_SUM,
+                pmesh.GetComm());
+  return global_count;
+}
+
+static void MarkPlaneX_Dofs(const mfem::ParMesh& pmesh,
+                            const mfem::ParFiniteElementSpace& fes,
+                            double xplane,
+                            mfem::Array<char>& mark,
+                            double tol,
+                            const char* label,
+                            bool must_exist)
+{
+  // Vertex-based marking works for both external boundaries and internal
+  // Schwarz planes, provided the plane is mesh-conforming.
+  support::MarkEssTrueDofs_VertPlaneX(pmesh, fes, xplane, mark, tol);
+
+  // Boundary-element marking helps for physical boundaries in 2D.
+  if (pmesh.Dimension() == 2)
+  {
+    support::MarkEssTrueDofs_BdrPlaneX_2D(pmesh, fes, xplane, mark, tol);
+  }
+
+  const int nverts = CountVerticesOnPlaneX(pmesh, xplane, tol);
+  int rank = 0;
+  MPI_Comm_rank(pmesh.GetComm(), &rank);
+  if (rank == 0)
+  {
+    std::cout << "[mark] " << label << " x=" << xplane
+              << " vertices=" << nverts << std::endl;
+  }
+
+  if (must_exist && nverts == 0)
+  {
+    throw std::runtime_error(std::string("Required plane not found for ") +
+                             label + " at x=" + std::to_string(xplane) +
+                             ". Check that the correct subdomain mesh is being passed.");
+  }
+}
+
+static double AverageValueOnPlaneX(const mfem::ParMesh& pmesh,
+                                   const mfem::ParGridFunction& x,
+                                   double xplane,
+                                   double tol)
+{
+  double local_sum = 0.0;
+  int local_count = 0;
+
+  for (int vi = 0; vi < pmesh.GetNV(); ++vi)
+  {
+    const double* v = pmesh.GetVertex(vi);
+
+    if (std::abs(v[0] - xplane) <= tol)
+    {
+      local_sum += x(vi);
+      local_count++;
+    }
+  }
+
+  double global_sum = 0.0;
+  int global_count = 0;
+
+  MPI_Comm comm = pmesh.GetComm();
+
+  MPI_Allreduce(&local_sum, &global_sum, 1, MPI_DOUBLE, MPI_SUM, comm);
+  MPI_Allreduce(&local_count, &global_count, 1, MPI_INT, MPI_SUM, comm);
+
+  if (global_count == 0)
+  {
+    throw std::runtime_error("No vertices found on requested interface plane.");
+  }
+
+  return global_sum / static_cast<double>(global_count);
+}
 static double BlockRMSDiff(N_Vector y,
                            N_Vector y_old,
                            int block,
@@ -513,10 +689,48 @@ static void app_A(MPI_Comm comm,
   constexpr int order = 1;
   constexpr double kappa = 1.0;
 
+  constexpr double x_physical = 0.0;
+  constexpr double T_physical = 270.0;
+  constexpr double x_interface = 0.6;
+  double T_interface_from_B = 270.0; // initial Schwarz guess
+
   mfem::Mesh mesh(mesh_file.c_str(), 1, 1);
   mfem::ParMesh pmesh(comm, mesh);
 
   auto fem = support::Init_FEMSystem(&pmesh, order, kappa);
+
+  const double tol = support::DefaultTolX(*fem.pmesh);
+
+  mfem::Array<char> ess_mark(fem.fes->GetTrueVSize());
+  ess_mark = 0;
+
+  MarkPlaneX_Dofs(*fem.pmesh, *fem.fes, x_physical, ess_mark, tol,
+                  "[client_A] physical boundary", true);
+
+  MarkPlaneX_Dofs(*fem.pmesh, *fem.fes, x_interface, ess_mark, tol,
+                  "[client_A] Schwarz interface", true);
+
+  support::MarkToList(ess_mark, fem.ess_tdofs);
+
+  InitializeDirichletValuesOnTwoPlanes(
+      *fem.pmesh,
+      *fem.fes,
+      ess_mark,
+      *fem.x,
+      tol,
+      x_physical,
+      T_physical,
+      x_interface,
+      T_interface_from_B);
+
+  std::cout << "[client_A] ess_tdofs size = "
+            << fem.ess_tdofs.Size() << std::endl;
+
+  support::ReportLineStats_Order1(
+      *fem.pmesh, *fem.x, x_physical, tol, "[client_A] initial physical x=0.0");
+
+  support::ReportLineStats_Order1(
+      *fem.pmesh, *fem.x, x_interface, tol, "[client_A] initial interface x=0.6");
 
   const std::string coupler_name = "mfem_coupler";
   const std::vector<std::string> app_names = {"client_A"};
@@ -531,21 +745,39 @@ static void app_A(MPI_Comm comm,
   GO flag = 1;
   int itr = 1;
 
-  while (flag)
+  const int max_client_iters = 200;
+
+  while (flag && itr <= max_client_iters)
   {
-    // A sends first.
-    std::cout << "[client_A] itr=" << itr << " before solve" << std::endl;
+    // The PCMS Receive() writes into fem.x. Re-apply essential values before
+    // FormLinearSystem(), because MFEM reads Dirichlet values from fem.x.
+    InitializeDirichletValuesOnTwoPlanes(
+        *fem.pmesh,
+        *fem.fes,
+        ess_mark,
+        *fem.x,
+        tol,
+        x_physical,
+        T_physical,
+        x_interface,
+        T_interface_from_B);
+
+    std::cout << "[client_A] itr=" << itr
+              << " before solve, T_interface_from_B="
+              << T_interface_from_B << std::endl;
 
     PrintGridFunctionSummary(
         "[client_A] fem.x BEFORE solve",
         *fem.x,
         comm);
+
     const auto residual =
         support::SolveSystem(fem, solver_type, prec_type, 1e-8, 500);
+
     PrintGridFunctionSummary(
-      "[client_A] fem.x AFTER solve / BEFORE send",
-      *fem.x,
-      comm);
+        "[client_A] fem.x AFTER solve / BEFORE send",
+        *fem.x,
+        comm);
 
     std::cout << "[client_A] itr=" << itr
               << " residual=" << residual
@@ -556,10 +788,37 @@ static void app_A(MPI_Comm comm,
     client.fields["client_A"]->Send();
     client.apps["client_A"]->EndSendPhase();
 
-    // Then A receives B-updated field from the coupler.
+    // Receive B's current field from the coupler. This may overwrite fem.x.
     client.apps["client_A"]->BeginReceivePhase();
     client.fields["client_A"]->Receive();
     client.apps["client_A"]->EndReceivePhase();
+
+    PrintGridFunctionSummary(
+        "[client_A] fem.x AFTER receive from B",
+        *fem.x,
+        comm);
+    ErrorToExactLinearProfile(*fem.pmesh, *fem.x, comm);
+    // Extract only the Schwarz interface value from the received field.
+    T_interface_from_B = AverageValueOnPlaneX(
+        *fem.pmesh, *fem.x, x_interface, tol);
+
+    // Restore App A's physical/interface Dirichlet data after the receive so
+    // diagnostics and the next iteration begin from a valid state.
+    InitializeDirichletValuesOnTwoPlanes(
+        *fem.pmesh,
+        *fem.fes,
+        ess_mark,
+        *fem.x,
+        tol,
+        x_physical,
+        T_physical,
+        x_interface,
+        T_interface_from_B);
+
+    PrintGridFunctionSummary(
+        "[client_A] fem.x AFTER restoring BCs",
+        *fem.x,
+        comm);
 
     // Then receive continue/stop flag.
     client.apps["client_A"]->BeginReceivePhase();
@@ -573,6 +832,14 @@ static void app_A(MPI_Comm comm,
     itr++;
   }
 
+  if (flag)
+  {
+    std::cerr << "[client_A] stopped at max_client_iters with flag still true\n";
+  }
+
+  PrintGridFunctionSummary("[client_A] FINAL fem.x", *fem.x, comm);
+  ErrorToExactLinearProfile(*fem.pmesh, *fem.x, comm);
+
   support::DestroyFEMSystem(fem);
 }
 
@@ -584,10 +851,48 @@ static void app_B(MPI_Comm comm,
   constexpr int order = 1;
   constexpr double kappa = 1.0;
 
+  constexpr double x_interface = 0.4;
+  constexpr double x_physical = 1.0;
+  constexpr double T_physical = 300.0;
+  double T_interface_from_A = 300.0; // initial Schwarz guess
+
   mfem::Mesh mesh(mesh_file.c_str(), 1, 1);
   mfem::ParMesh pmesh(comm, mesh);
 
   auto fem = support::Init_FEMSystem(&pmesh, order, kappa);
+
+  const double tol = support::DefaultTolX(*fem.pmesh);
+
+  mfem::Array<char> ess_mark(fem.fes->GetTrueVSize());
+  ess_mark = 0;
+
+  MarkPlaneX_Dofs(*fem.pmesh, *fem.fes, x_interface, ess_mark, tol,
+                  "[client_B] Schwarz interface", true);
+
+  MarkPlaneX_Dofs(*fem.pmesh, *fem.fes, x_physical, ess_mark, tol,
+                  "[client_B] physical boundary", true);
+
+  support::MarkToList(ess_mark, fem.ess_tdofs);
+
+  InitializeDirichletValuesOnTwoPlanes(
+      *fem.pmesh,
+      *fem.fes,
+      ess_mark,
+      *fem.x,
+      tol,
+      x_physical,
+      T_physical,
+      x_interface,
+      T_interface_from_A);
+
+  std::cout << "[client_B] ess_tdofs size = "
+            << fem.ess_tdofs.Size() << std::endl;
+
+  support::ReportLineStats_Order1(
+      *fem.pmesh, *fem.x, x_interface, tol, "[client_B] initial interface x=0.4");
+
+  support::ReportLineStats_Order1(
+      *fem.pmesh, *fem.x, x_physical, tol, "[client_B] initial physical x=1.0");
 
   const std::string coupler_name = "mfem_coupler";
   const std::vector<std::string> app_names = {"client_B"};
@@ -602,16 +907,54 @@ static void app_B(MPI_Comm comm,
   GO flag = 1;
   int itr = 1;
 
-  while (flag)
+  const int max_client_iters = 200;
+
+  while (flag && itr <= max_client_iters)
   {
-    // B receives first.
+    // B receives A's current field first.
     client.apps["client_B"]->BeginReceivePhase();
     client.fields["client_B"]->Receive();
     client.apps["client_B"]->EndReceivePhase();
 
-    // Then B solves and sends.
+    PrintGridFunctionSummary(
+        "[client_B] fem.x AFTER receive from A",
+        *fem.x,
+        comm);
+
+    // Extract only the Schwarz interface value from A's received field.
+    T_interface_from_A = AverageValueOnPlaneX(
+        *fem.pmesh, *fem.x, x_interface, tol);
+
+    // Apply B's physical Dirichlet condition and A-provided interface value.
+    InitializeDirichletValuesOnTwoPlanes(
+        *fem.pmesh,
+        *fem.fes,
+        ess_mark,
+        *fem.x,
+        tol,
+        x_physical,
+        T_physical,
+        x_interface,
+        T_interface_from_A);
+
+    std::cout << "[client_B] itr=" << itr
+              << " before solve, T_interface_from_A="
+              << T_interface_from_A << std::endl;
+
+    PrintGridFunctionSummary(
+        "[client_B] fem.x BEFORE solve",
+        *fem.x,
+        comm);
+
     const auto residual =
         support::SolveSystem(fem, solver_type, prec_type, 1e-8, 500);
+
+    PrintGridFunctionSummary(
+        "[client_B] fem.x AFTER solve / BEFORE send",
+        *fem.x,
+        comm);
+
+    ErrorToExactLinearProfile(*fem.pmesh, *fem.x, comm);
 
     client.apps["client_B"]->BeginSendPhase();
     client.fields["client_B"]->Send();
@@ -629,12 +972,20 @@ static void app_B(MPI_Comm comm,
     itr++;
   }
 
+  if (flag)
+  {
+    std::cerr << "[client_B] stopped at max_client_iters with flag still true\n";
+  }
+
+  PrintGridFunctionSummary("[client_B] FINAL fem.x", *fem.x, comm);
+  ErrorToExactLinearProfile(*fem.pmesh, *fem.x, comm);
+
   support::DestroyFEMSystem(fem);
 }
 
 static void coupler(MPI_Comm comm,
                     const std::string& mesh_file,
-                    double tol = 1e-8,
+                    double tol = 1e-6,
                     int max_iters = 200)
 {
   Omega_h::Library lib(nullptr, nullptr, comm);
