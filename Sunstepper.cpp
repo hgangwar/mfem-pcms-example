@@ -3,10 +3,6 @@
 //
 #include "include/Schwarz_Sundial_Coupling.h"
 #include <mfem.hpp>
-#include <mpi.h>
-
-#include <iostream>
-#include <memory>
 
 int main(int argc, char* argv[])
 {

@@ -24,7 +24,7 @@
 #include <cmath>
 #include <mpi.h>
 #include "mfem.hpp"
-#include "../include/schwarz_coupling_support.h"
+#include "../include/coupling_support.h"
 #include "../include/mfem_field_adapter.h"
 #include <Omega_h_mesh.hpp>
 #include <pcms/pcms.h>

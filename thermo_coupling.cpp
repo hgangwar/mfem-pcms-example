@@ -1,5 +1,11 @@
-#include "include/schwarz_coupling_support.h"
+#include "include/coupling_support.h"
 #include "include/mfem_field_adapter.h"
+#include <pcms/pcms.h>
+#include <pcms/create_field.h>
+#include <pcms/transfer_field2.h>
+#include <pcms/utility/types.h>
+#include <Omega_h_file.hpp>
+
 using pcms::Copy;
 using pcms::GO;
 using pcms::Lagrange;
@@ -18,7 +24,7 @@ static void app_A(MPI_Comm comm, const std::string mesh_file,
 
   // ΩA: [0,0.6]x[0,1]
   mfem::Mesh mesh(mesh_file, 1, 1);
-  ParMesh pmesh(comm, mesh);
+  mfem::ParMesh pmesh(comm, mesh);
 
   // States
   double T_left = 270.0;
@@ -32,7 +38,7 @@ static void app_A(MPI_Comm comm, const std::string mesh_file,
   support::FEMSystem fem = support::Init_FEMSystem(&pmesh, order, params.kappa);
 
   // Essential boundaries: both x-min and x-max for each subdomain
-  Array<int> ess_bdrA(pmesh.bdr_attributes.Max());
+  mfem::Array<int> ess_bdrA(pmesh.bdr_attributes.Max());
   ess_bdrA = 0;
   ess_bdrA[left_bdr_x] = 1;
   ess_bdrA[right_bdr_x] = 1;
@@ -106,7 +112,7 @@ static void app_B(MPI_Comm comm, const std::string mesh_file,
   // Order of fes assumed
   int order = 1;
   mfem::Mesh mesh(mesh_file, 1, 1);
-  ParMesh pmesh(comm, mesh);
+  mfem::ParMesh pmesh(comm, mesh);
 
   // States
   double T_right = 300.0;
@@ -120,7 +126,7 @@ static void app_B(MPI_Comm comm, const std::string mesh_file,
   support::FEMSystem fem = support::Init_FEMSystem(&pmesh, order, params.kappa);
 
   // Essential boundaries: both x-min and x-max for each subdomain
-  Array<int> ess_bdrB(pmesh.bdr_attributes.Max());
+  mfem::Array<int> ess_bdrB(pmesh.bdr_attributes.Max());
   ess_bdrB = 0;
   ess_bdrB[left_bdr_x] = 1;
   ess_bdrB[right_bdr_x] = 1;
@@ -210,11 +216,11 @@ void coupler(MPI_Comm comm, const std::string mesh_A_file,
   Omega_h::Mesh mesh_B(&lib);
   Omega_h::binary::read(mesh_B_file, world, &mesh_B);
 
-  dtype random_temp = 280;
-  Omega_h::Read<dtype> init(nverts, random_temp); // init with random guess
+  support::dtype random_temp = 280;
+  Omega_h::Read<support::dtype> init(nverts, random_temp); // init with random guess
   auto field_name = std::string("temp");
-  mesh_A.add_tag<dtype>(Omega_h::VERT, field_name, 1, init);
-  mesh_B.add_tag<dtype>(Omega_h::VERT, field_name, 1, init);
+  mesh_A.add_tag<support::dtype>(Omega_h::VERT, field_name, 1, init);
+  mesh_B.add_tag<support::dtype>(Omega_h::VERT, field_name, 1, init);
   auto isOwned = mesh_A.owned(0);
 
   // is_overlap is a vector of size mesh.nents(0) and is initialized to 1
@@ -239,8 +245,8 @@ void coupler(MPI_Comm comm, const std::string mesh_A_file,
   // Initialize coupling interface
   // auto coupler = std::make_unique<pcms::Coupler>(field_name, comm, true,
   // partition);
-  auto adapter_A = OmegaHFieldAdapter<dtype>(field_name, mesh_A, is_overlap_A);
-  auto adapter_B = OmegaHFieldAdapter<dtype>(field_name, mesh_B, is_overlap_B);
+  auto adapter_A = OmegaHFieldAdapter<support::dtype>(field_name, mesh_A, is_overlap_A);
+  auto adapter_B = OmegaHFieldAdapter<support::dtype>(field_name, mesh_B, is_overlap_B);
   auto server_A = support::Init_Coupler(
     comm, coupler_name, app_names, field_names, true, partition, adapter_A);
   auto server_B = support::Init_Coupler(
@@ -274,7 +280,7 @@ void coupler(MPI_Comm comm, const std::string mesh_A_file,
     // start step
     done = 0;
 
-    auto dof_C = Omega_h::deep_copy(mesh_A.get_array<dtype>(0, "temp"));
+    auto dof_C = Omega_h::deep_copy(mesh_A.get_array<support::dtype>(0, "temp"));
 
     // Receive from A to C
     server_A.apps["client_A"]->BeginReceivePhase();
@@ -284,10 +290,10 @@ void coupler(MPI_Comm comm, const std::string mesh_A_file,
     server_A.apps["client_A"]->EndReceivePhase();
 
     // init the field
-    auto dof_A = mesh_A.get_array<dtype>(0, "temp");
+    auto dof_A = mesh_A.get_array<support::dtype>(0, "temp");
 
     // --- after update: read new field values
-    auto rms = support::ComputeRMS(Omega_h::Read<dtype>(dof_C), dof_A);
+    auto rms = support::ComputeRMS(Omega_h::Read<support::dtype>(dof_C), dof_A);
     printf("rms received at coupler:%f\n", rms);
     flag = (rms > tol);
 
@@ -312,7 +318,7 @@ void coupler(MPI_Comm comm, const std::string mesh_A_file,
     pcms::interpolate_field2(*field_B, *field_A);
 
     // --- after update: read new field values
-    rms = support::ComputeRMS(Omega_h::Read<dtype>(dof_C), dof_A);
+    rms = support::ComputeRMS(Omega_h::Read<support::dtype>(dof_C), dof_A);
 
     // Send to App A
     server_A.apps["client_A"]->BeginSendPhase();
@@ -354,14 +360,7 @@ int main(int argc, char* argv[])
   support::ThermalParams params;
   params.size = {0.6, 1.0};
   params.ne = {30, 30};
-  // params.q_total = 10.0;
   params.kappa = 1.0;
-  // params.rho     = 1.0;
-  // params.cp      = 1.0;
-  // params.h_flux  = 0.0;
-  // params.h_conv  = 0.0;
-  // params.T_conv  = 0.0;
-  // params.T_dirichlet = 300.0;
 
   MPI_Comm comm = MPI_COMM_WORLD;
   {
@@ -369,9 +368,6 @@ int main(int argc, char* argv[])
       case -1: coupler(comm, meshFile, argv[3]); break;
       case 0: app_A(comm, meshFile, params, argv[3], argv[4]); break;
       case 1: app_B(comm, meshFile, params, argv[3], argv[4]); break;
-      default:
-        std::cerr << "Unhandled client id (should be -1, 0,1)\n";
-        MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
     }
   }
   MPI_Finalize();

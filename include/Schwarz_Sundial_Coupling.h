@@ -5,10 +5,7 @@
 #ifndef PCMS_MFEM_COUPLING_SCHWARTZ_SUNDIAL_COUPLING_H
 #define PCMS_MFEM_COUPLING_SCHWARTZ_SUNDIAL_COUPLING_H
 
-
-
-#include "mfem.hpp"
-#include "support.h"
+#include "coupling_support.h"
 #include <nvector/nvector_serial.h>
 #include <sundials/sundials_stepper.h>
 #include <sundials/sundials_context.h>

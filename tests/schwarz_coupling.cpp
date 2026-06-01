@@ -31,12 +31,6 @@
 // * errors vs exact 270+30x go to ~machine tolerance.
 
 #include "mfem.hpp"
-#include <iostream>
-#include <vector>
-#include <cmath>
-#include <algorithm>
-#include <map>
-#include <iomanip>
 
 using namespace mfem;
 

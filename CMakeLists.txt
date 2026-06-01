@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(pcms_mfem_coupling C CXX)
 
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -54,12 +55,17 @@ target_link_libraries(test_tag_transfer PUBLIC mfem pcms::pcms)
 add_executable(schwarz_coupling tests/schwarz_coupling.cpp)
 target_link_libraries(schwarz_coupling PUBLIC mfem)
 
+add_library(coupling_support coupling_support.cpp)
+target_include_directories(coupling_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(coupling_support PUBLIC pcms::pcms mfem)
+
 add_executable(thermo_coupling thermo_coupling.cpp)
-target_link_libraries(thermo_coupling PUBLIC mfem pcms::pcms)
+target_link_libraries(thermo_coupling PUBLIC mfem pcms::pcms coupling_support)
 
 # Full overlap, no mask coupling convergence test
 add_executable(coup_convg tests/test_coupling_convg.cpp)
 target_link_libraries(coup_convg PUBLIC mfem pcms::pcms)
+
 
 ################### SUNDIALS Schwartz Iterations #########################
 add_library(schwarz_sundial Schwarz_Sundial_Coupling.cpp)
