@@ -18,6 +18,11 @@ find_package(MPI REQUIRED)
 #find_package(Gmsh REQUIRED)
 find_program(BASH_EXECUTABLE NAMES bash REQUIRED)
 
+################### Coupling support #########################
+add_library(coupling_support coupling_support.cpp)
+target_include_directories(coupling_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(coupling_support PUBLIC pcms::pcms mfem)
+
 ################### MFEM SOLVERS #########################
 #add_executable(fluxSolver fluxSolver.cpp)
 #target_link_libraries(fluxSolver PUBLIC mfem pcms::pcms)
@@ -39,6 +44,8 @@ target_link_libraries(mfem_adapter_mask_test PUBLIC mfem pcms::pcms)
 add_executable(oh_adapter_mask_test tests/test_oh_mask_with_adapter.cpp)
 target_link_libraries(oh_adapter_mask_test PUBLIC mfem pcms::pcms)
 
+add_executable(test_permutation tests/test_permutation.cpp)
+target_link_libraries(test_permutation PRIVATE coupling_support pcms::pcms mfem)
 
 ################### Mesh Operations #########################
 add_executable(describe utilities/describe.cpp)
@@ -55,9 +62,6 @@ target_link_libraries(test_tag_transfer PUBLIC mfem pcms::pcms)
 add_executable(schwarz_coupling tests/schwarz_coupling.cpp)
 target_link_libraries(schwarz_coupling PUBLIC mfem)
 
-add_library(coupling_support coupling_support.cpp)
-target_include_directories(coupling_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(coupling_support PUBLIC pcms::pcms mfem)
 
 add_executable(thermo_coupling thermo_coupling.cpp)
 target_link_libraries(thermo_coupling PUBLIC mfem pcms::pcms coupling_support)

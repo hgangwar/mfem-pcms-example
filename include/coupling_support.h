@@ -6,7 +6,7 @@
 #include <Omega_h_array.hpp>
 #include <Omega_h_file.hpp>
 #include <Omega_h_mesh.hpp>
-
+#include "pcms/coupler2.h"
 namespace support
 {
 
@@ -51,10 +51,10 @@ struct ThermalParams
 struct Coupling
 {
   std::string name;                                  // Coupler name
-  std::unique_ptr<pcms::Coupler> cpl;                // Coupler instance
+  std::unique_ptr<pcms::Coupler2> cpl;                // Coupler instance
   std::vector<std::string> app_names;                // Attached apps
   std::vector<std::string> field_names;              // Attached fields
-  std::map<std::string, pcms::Application*> apps;    // App name -> pointer
+  std::map<std::string, pcms::Application2*> apps;    // App name -> pointer
   std::map<std::string, pcms::CoupledField*> fields; // App field -> pointer
   bool isServer = false;
 };
@@ -78,8 +78,7 @@ struct OutputPack
   mfem::ParGridFunction exact;
   mfem::ParGridFunction err;
 
-  OutputPack(const std::string& collection,
-             mfem::ParMesh& pm,
+  OutputPack(const std::string& collection, mfem::ParMesh& pm,
              mfem::ParFiniteElementSpace& fes);
 };
 
@@ -90,11 +89,8 @@ FEMSystem Init_FEMSystem(mfem::ParMesh* pmesh, int order, double kappa_val);
 
 void DestroyFEMSystem(FEMSystem& sys);
 
-long SolveSystem(FEMSystem& sys,
-                 const std::string& solver_type,
-                 const std::string& prec_type,
-                 double rel_tol,
-                 int max_iter);
+long SolveSystem(FEMSystem& sys, const std::string& solver_type,
+                 const std::string& prec_type, double rel_tol, int max_iter);
 
 // -----------------------------
 // Utilities
@@ -104,43 +100,31 @@ double DefaultTolX(const mfem::Mesh& mesh);
 void shift_meshX(Omega_h::Mesh& mesh, double dx);
 
 Omega_h::Write<Omega_h::I8> create_mask(Omega_h::Mesh& mesh,
-                                        const char* tag_name,
-                                        int tag_value);
+                                        const char* tag_name, int tag_value);
 
 double RMSDiff(const std::vector<std::pair<double, double>>& a,
                const std::vector<std::pair<double, double>>& b);
 
-long ComputeRMS(const Omega_h::Read<dtype>& a,
-                const Omega_h::Read<dtype>& b);
+long ComputeRMS(const Omega_h::Read<dtype>& a, const Omega_h::Read<dtype>& b);
 
 std::vector<std::pair<double, double>> ExtractVertexLineTrace(
-  const Omega_h::Mesh& mesh,
-  Omega_h::Read<Omega_h::Real> field_v,
-  double xline,
+  const Omega_h::Mesh& mesh, Omega_h::Read<Omega_h::Real> field_v, double xline,
   double tol);
 
 void FillTagOnXLineFromTrace(
-  Omega_h::Mesh& mesh,
-  const std::vector<std::pair<double, double>>& trace,
-  double x_line,
-  double tol,
-  const char* tag_name = "temp");
+  Omega_h::Mesh& mesh, const std::vector<std::pair<double, double>>& trace,
+  double x_line, double tol, const char* tag_name = "temp");
 
 void ApplyBoundaryTraceByAttr(
-  mfem::ParMesh& pmesh,
-  mfem::ParGridFunction& gf,
-  int bdr_attr,
-  const std::vector<std::pair<double, double>>& trace,
-  double tol);
+  mfem::ParMesh& pmesh, mfem::ParGridFunction& gf, int bdr_attr,
+  const std::vector<std::pair<double, double>>& trace, double tol);
 
 void ApplyBoundaryConstantByAttr(mfem::ParMesh& pmesh,
-                                 mfem::ParGridFunction& gf,
-                                 int bdr_attr,
+                                 mfem::ParGridFunction& gf, int bdr_attr,
                                  double value);
 
 void ReportBdrAttrStats(const mfem::ParMesh& pmesh,
-                        const mfem::ParGridFunction& T,
-                        int bdr_attr,
+                        const mfem::ParGridFunction& T, int bdr_attr,
                         const char* name);
 
 void ReportTraceStats(const std::vector<std::pair<double, double>>& tr,
@@ -148,8 +132,7 @@ void ReportTraceStats(const std::vector<std::pair<double, double>>& tr,
 
 std::vector<std::pair<double, double>> RelaxTrace(
   const std::vector<std::pair<double, double>>& old_t,
-  const std::vector<std::pair<double, double>>& new_t,
-  double omega);
+  const std::vector<std::pair<double, double>>& new_t, double omega);
 
 void SaveFields(OutputPack& out, const FEMSystem& sys, int it);
 
@@ -161,11 +144,9 @@ void reset_mfem_attributes(mfem::Mesh& mesh, int attr = 1);
 
 void remove_oh_tag(Omega_h::Mesh& mesh, const std::string& name);
 
-void SaveParaview(mfem::ParMesh& pmesh,
-                  mfem::ParGridFunction& x,
+void SaveParaview(mfem::ParMesh& pmesh, mfem::ParGridFunction& x,
                   const std::string& collection = "thermal_solution",
-                  const std::string& field_name = "Temperature",
-                  int cycle = 0,
+                  const std::string& field_name = "Temperature", int cycle = 0,
                   double time = 0.0);
 
 //--------------------------------------------------------------
@@ -175,12 +156,10 @@ void SaveParaview(mfem::ParMesh& pmesh,
 // in the .cpp for every adapter type you use.
 //--------------------------------------------------------------
 template <typename Adapter_type>
-Coupling Init_Coupler(MPI_Comm comm,
-                      const std::string& name,
+Coupling Init_Coupler(MPI_Comm comm, const std::string& name,
                       const std::vector<std::string>& app_names,
                       const std::vector<std::string>& field_names,
-                      bool isServer,
-                      const redev::Partition ptn,
+                      bool isServer, const redev::Partition ptn,
                       Adapter_type& Adapter)
 {
   Coupling cp;
@@ -194,15 +173,62 @@ Coupling Init_Coupler(MPI_Comm comm,
       "Mismatch: app_names and field_names must be of the same size.");
   }
 
-  cp.cpl = std::make_unique<pcms::Coupler>(name, comm, isServer, ptn);
+  cp.cpl = std::make_unique<pcms::Coupler2>(name, comm, isServer, ptn);
 
   for (size_t i = 0; i < app_names.size(); ++i) {
     auto* app = cp.cpl->AddApplication(app_names[i]);
+
+
     cp.fields[app_names[i]] = app->AddField(field_names[i], std::move(Adapter));
     cp.apps[app_names[i]] = app;
   }
 
   return cp;
 }
+void initializeFieldWithGids(pcms::FieldT<pcms::Real>* field,
+                             pcms::Real multiplier);
+template <typename dtype>
+Coupling Init_Coupler_OH(MPI_Comm comm, const std::string& name,
+                         const std::vector<std::string>& app_names,
+                         const std::vector<std::string>& field_names,
+                         bool isServer, const redev::Partition ptn,
+                         Omega_h::Mesh& mesh,
+                         const Omega_h::Write<Omega_h::I8> is_overlap)
+{
+  if (app_names.size() != field_names.size())
+    throw std::runtime_error("app_names and field_names size mismatch.");
+
+  Coupling cp;
+  cp.name = name;
+  cp.app_names = app_names;
+  cp.field_names = field_names;
+  cp.isServer = isServer;
+
+  cp.cpl = std::make_unique<pcms::Coupler2>(name, comm, isServer, ptn);
+
+  for (size_t i = 0; i < app_names.size(); ++i) {
+    auto* app = cp.cpl->AddApplication(app_names[i]);
+    auto& layout = app->AddLayout(
+        "temp",
+        pcms::CreateLagrangeLayout(mesh, 1, 1, pcms::CoordinateSystem::Cartesian));
+    auto field = layout.CreateFieldReal();
+    auto* field_ptr = field.get();
+    initializeFieldWithGids(field_ptr, 0.0);
+    app->AddField(field_names[i], std::move(field));
+
+    cp.apps[app_names[i]] = app;
+  }
+
+  return cp;
+}
+double ComputeAbsoluteError(const Omega_h::Mesh& mesh);
+void PrintTempStats(const Omega_h::Mesh& mesh, const std::string& name,
+                    int itr);
+
+double ComputeAbsoluteError(const mfem::ParMesh& pmesh,
+                            const mfem::ParGridFunction& x);
+
+void PrintTempStats(const mfem::ParMesh& pmesh, const mfem::ParGridFunction& x,
+                    const std::string& name, int itr);
 
 } // namespace support

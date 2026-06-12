@@ -35,6 +35,7 @@ public:
     if (use_mask) {
       PCMS_ALWAYS_ASSERT(attr >= 0);
       create_mask(attr);
+
     } else {
       hasmask_ = false;
       packed_size_ = 0;
@@ -78,7 +79,6 @@ public:
     packed_size_ = count;
     hasmask_ = (packed_size_ > 0);
 
-    //printf("Filtered %d unique vertices.\n", packed_size_);
 
     mask_view_ = Rank1View<pcms::LO, Kokkos::HostSpace>(mask_storage_.GetData(),
                                                         mask_storage_.Size());
@@ -106,8 +106,7 @@ public:
       R->Mult(gf_data_, serialized_data);
       pcms::LO filtered_size = has_mask() ? packed_size_ : pfes_.GetTrueVSize();
       mfem::Vector filtered_data(filtered_size);
-      //printf("\n Size of filtered_data : %d, mask size: %d\n",
-      //       filtered_data.Size(), this->mask_storage_.Size());
+
 
       if (has_mask()) {
         for (pcms::LO i = 0; i < serialized_data.Size(); ++i) {
@@ -129,9 +128,7 @@ public:
           filtered_data[i] = serialized_data[i];
         }
       }
-      // ! instead of returning the serialized data, we need to write it to the
-      // buffer
-      if (permutation.size() > 0) { // check if permutation is empty
+      if (permutation.size() > 0) {
         for (int i = 0; i < filtered_data.Size(); ++i) {
           buffer[i] = filtered_data[permutation[i]];
         }
@@ -209,13 +206,15 @@ public:
     pmesh_.GetGlobalVertexIndices(gids);
     if (has_mask()) {
       std::vector<GO> filtered_gids;
-      filtered_gids.reserve(packed_size_);
+      filtered_gids.resize(packed_size_);
       for (int i = 0; i < mask_storage_.Size(); ++i) {
         if (mask_view_(i) > 0) {
-          filtered_gids.push_back(static_cast<GO>(gids[i]));
+          // filtered_gids.push_back(static_cast<GO>(gids[i]));
+          filtered_gids[mask_view_[i] - 1] = gids[i];
         }
       }
-      PCMS_ALWAYS_ASSERT(filtered_gids.size() == static_cast<size_t>(packed_size_));
+      PCMS_ALWAYS_ASSERT(filtered_gids.size() ==
+                         static_cast<size_t>(packed_size_));
       return filtered_gids;
     }
     return {gids.begin(), gids.end()};
@@ -227,8 +226,6 @@ public:
     PCMS_FUNCTION_TIMER;
     pcms::ReversePartitionMap reverse_partition;
 
-    // note GetVertices assumes that the mesh is not higher order
-    // if we have a higher order mesh, we need to use GetNodes
     mfem::Vector vcoords;
     pcms::LO dim = pmesh_.Dimension();
     pmesh_.GetVertices(vcoords);
@@ -243,8 +240,7 @@ public:
         std::copy(vcoords.begin() + i, vcoords.begin() + i + dim,
                   coord.begin());
         auto dr = partition.GetDr(local_index, dim, coord);
-        reverse_partition[dr].emplace_back(
-          local_index++);
+        reverse_partition[dr].emplace_back(local_index++);
       }
     }
     int counter = 0;
@@ -265,6 +261,96 @@ public:
   pcms::LO get_packed_size() const { return packed_size_; }
 
   bool has_mask() const { return hasmask_; }
+
+  template <typename T>
+  void PrintMaskView(const std::string& name,
+                     Rank1View<T, Kokkos::HostSpace> mask_view,
+                     mfem::ParMesh& pmesh, int rank)
+  {
+    if (rank != 0)
+      return;
+
+    std::cout << "\n[INFO] " << name << "\n";
+    std::cout << "  size = " << mask_view.size() << "\n";
+
+    if (mask_view.size() == 0)
+      return;
+
+    mfem::Array<HYPRE_BigInt> global_ids;
+    pmesh.GetGlobalVertexIndices(global_ids);
+
+    T min_val = mask_view(0);
+    T max_val = mask_view(0);
+
+    size_t zero = 0;
+    size_t nonzero = 0;
+
+    std::set<T> uniq;
+
+    for (size_t i = 0; i < mask_view.size(); ++i) {
+
+      const auto v = mask_view(i);
+
+      min_val = std::min(min_val, v);
+      max_val = std::max(max_val, v);
+
+      uniq.insert(v);
+
+      if (v == 0)
+        ++zero;
+      else
+        ++nonzero;
+    }
+
+    std::cout << "  min = " << min_val << "\n";
+    std::cout << "  max = " << max_val << "\n";
+    std::cout << "  unique = " << uniq.size() << "\n";
+    std::cout << "  zero entries = " << zero << "\n";
+    std::cout << "  nonzero entries = " << nonzero << "\n";
+
+    std::cout << "  first filtered gids = ";
+
+    int printed = 0;
+
+    for (size_t i = 0; i < mask_view.size() && printed < 20; ++i) {
+
+      if (mask_view(i) != 0) {
+
+        std::cout << global_ids[i] << " ";
+
+        printed++;
+      }
+    }
+
+    std::cout << "\n";
+  }
+  template <typename T>
+  void PrintFirstFilteredGidsAndCoords(
+    const std::string& name, Rank1View<T, Kokkos::HostSpace> mask_view,
+    mfem::ParMesh& pmesh, int rank)
+  {
+    if (rank != 0)
+      return;
+
+    mfem::Array<HYPRE_BigInt> gids;
+    pmesh.GetGlobalVertexIndices(gids);
+
+    std::cout << "\n[INFO] " << name << " first filtered vertices\n";
+
+    int printed = 0;
+    for (int v = 0; v < pmesh.GetNV() && printed < 20; ++v) {
+      if (mask_view(v) == 0)
+        continue;
+
+      const double* x = pmesh.GetVertex(v);
+
+      std::cout << "  local_v = " << v << ", gid = " << gids[v]
+                << ", mask = " << mask_view(v) << ", x = " << x[0]
+                << ", y = " << x[1] << "\n";
+
+      ++printed;
+    }
+  }
 
 private:
   std::string name_;

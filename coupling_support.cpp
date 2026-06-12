@@ -45,11 +45,8 @@ void DestroyFEMSystem(FEMSystem& sys)
   sys.pmesh = nullptr;
 }
 
-long SolveSystem(FEMSystem& sys,
-                 const std::string& solver_type,
-                 const std::string& prec_type,
-                 double rel_tol,
-                 int max_iter)
+long SolveSystem(FEMSystem& sys, const std::string& solver_type,
+                 const std::string& prec_type, double rel_tol, int max_iter)
 {
   mfem::OperatorPtr A;
   mfem::HypreParVector X, B;
@@ -75,15 +72,14 @@ long SolveSystem(FEMSystem& sys,
   std::unique_ptr<mfem::IterativeSolver> solver;
   MPI_Comm comm = sys.fes->GetParMesh()->GetComm();
 
-  if (solver_type == "CG") {
+  if (solver_type == "CG")
     solver = std::make_unique<mfem::CGSolver>(comm);
-  } else if (solver_type == "MINRES") {
+  else if (solver_type == "MINRES")
     solver = std::make_unique<mfem::MINRESSolver>(comm);
-  } else if (solver_type == "GMRES") {
+  else if (solver_type == "GMRES")
     solver = std::make_unique<mfem::GMRESSolver>(comm);
-  } else {
+  else
     MFEM_ABORT("Unknown solver.");
-  }
 
   solver->SetOperator(*A_hypre);
   solver->SetPreconditioner(*prec);
@@ -133,8 +129,7 @@ void shift_meshX(Omega_h::Mesh& mesh, double dx)
 }
 
 Omega_h::Write<Omega_h::I8> create_mask(Omega_h::Mesh& mesh,
-                                        const char* tag_name,
-                                        int tag_value)
+                                        const char* tag_name, int tag_value)
 {
   Omega_h::Write<Omega_h::I8> mask(mesh.nents(0), 0);
 
@@ -199,8 +194,7 @@ double RMSDiff(const std::vector<std::pair<double, double>>& a,
   return std::sqrt(s / std::max<size_t>(1, a.size()));
 }
 
-long ComputeRMS(const Omega_h::Read<dtype>& a,
-                const Omega_h::Read<dtype>& b)
+long ComputeRMS(const Omega_h::Read<dtype>& a, const Omega_h::Read<dtype>& b)
 {
   const int n = a.size();
 
@@ -226,9 +220,7 @@ long ComputeRMS(const Omega_h::Read<dtype>& a,
 }
 
 std::vector<std::pair<double, double>> ExtractVertexLineTrace(
-  const Omega_h::Mesh& mesh,
-  Omega_h::Read<Omega_h::Real> field_v,
-  double xline,
+  const Omega_h::Mesh& mesh, Omega_h::Read<Omega_h::Real> field_v, double xline,
   double tol)
 {
   std::vector<std::pair<double, double>> trace;
@@ -263,11 +255,8 @@ std::vector<std::pair<double, double>> ExtractVertexLineTrace(
 }
 
 void FillTagOnXLineFromTrace(
-  Omega_h::Mesh& mesh,
-  const std::vector<std::pair<double, double>>& trace,
-  double x_line,
-  double tol,
-  const char* tag_name)
+  Omega_h::Mesh& mesh, const std::vector<std::pair<double, double>>& trace,
+  double x_line, double tol, const char* tag_name)
 {
   if (trace.empty()) {
     return;
@@ -329,11 +318,8 @@ void FillTagOnXLineFromTrace(
 }
 
 void ApplyBoundaryTraceByAttr(
-  mfem::ParMesh& pmesh,
-  mfem::ParGridFunction& gf,
-  int bdr_attr,
-  const std::vector<std::pair<double, double>>& trace,
-  double tol)
+  mfem::ParMesh& pmesh, mfem::ParGridFunction& gf, int bdr_attr,
+  const std::vector<std::pair<double, double>>& trace, double tol)
 {
   MFEM_VERIFY(!trace.empty(),
               "Empty trace passed to ApplyBoundaryTraceByAttr.");
@@ -372,8 +358,7 @@ void ApplyBoundaryTraceByAttr(
 }
 
 void ApplyBoundaryConstantByAttr(mfem::ParMesh& pmesh,
-                                 mfem::ParGridFunction& gf,
-                                 int bdr_attr,
+                                 mfem::ParGridFunction& gf, int bdr_attr,
                                  double value)
 {
   mfem::Array<int> verts;
@@ -391,8 +376,7 @@ void ApplyBoundaryConstantByAttr(mfem::ParMesh& pmesh,
 }
 
 void ReportBdrAttrStats(const mfem::ParMesh& pmesh,
-                        const mfem::ParGridFunction& T,
-                        int bdr_attr,
+                        const mfem::ParGridFunction& T, int bdr_attr,
                         const char* name)
 {
   mfem::Array<int> verts;
@@ -437,8 +421,7 @@ void ReportTraceStats(const std::vector<std::pair<double, double>>& tr,
             << " (range=" << (vmax - vmin) << ")\n";
 }
 
-OutputPack::OutputPack(const std::string& collection,
-                       mfem::ParMesh& pm,
+OutputPack::OutputPack(const std::string& collection, mfem::ParMesh& pm,
                        mfem::ParFiniteElementSpace& fes)
   : pvd(collection.c_str(), &pm), exact(&fes), err(&fes)
 {
@@ -448,8 +431,7 @@ OutputPack::OutputPack(const std::string& collection,
 
 std::vector<std::pair<double, double>> RelaxTrace(
   const std::vector<std::pair<double, double>>& old_t,
-  const std::vector<std::pair<double, double>>& new_t,
-  double omega)
+  const std::vector<std::pair<double, double>>& new_t, double omega)
 {
   MFEM_VERIFY(old_t.size() == new_t.size(), "Trace sizes differ.");
   std::vector<std::pair<double, double>> out = new_t;
@@ -502,12 +484,9 @@ void remove_oh_tag(Omega_h::Mesh& mesh, const std::string& name)
   }
 }
 
-void SaveParaview(mfem::ParMesh& pmesh,
-                  mfem::ParGridFunction& x,
-                  const std::string& collection,
-                  const std::string& field_name,
-                  int cycle,
-                  double time)
+void SaveParaview(mfem::ParMesh& pmesh, mfem::ParGridFunction& x,
+                  const std::string& collection, const std::string& field_name,
+                  int cycle, double time)
 {
   mfem::ParaViewDataCollection pvdc(collection.c_str(), &pmesh);
   pvdc.SetPrefixPath("paraview");
@@ -518,5 +497,118 @@ void SaveParaview(mfem::ParMesh& pmesh,
   pvdc.RegisterField(field_name.c_str(), &x);
   pvdc.Save();
 }
+double ComputeAbsoluteError(const Omega_h::Mesh& mesh)
+{
+  auto temp = mesh.get_array<support::dtype>(0, "temp");
 
+  auto coords = mesh.coords();
+
+  auto temp_h = Omega_h::HostRead<support::dtype>(temp);
+  auto coords_h = Omega_h::HostRead<double>(coords);
+
+  double err2 = 0.0;
+
+  const int nv = mesh.nverts();
+
+  for (int v = 0; v < nv; ++v) {
+
+    double x = coords_h[2 * v]; // x-coordinate
+
+    double exact = 270.0 + 30.0 * x;
+
+    double diff = std::abs(temp_h[v] - exact);
+
+    err2 += diff * diff;
+  }
+
+  return std::sqrt(err2 / nv);
+}
+void PrintTempStats(const Omega_h::Mesh& mesh, const std::string& name, int itr)
+{
+  auto temp = mesh.get_array<support::dtype>(0, "temp");
+  auto temp_h = Omega_h::HostRead<support::dtype>(temp);
+
+  double min_T = std::numeric_limits<double>::max();
+  double max_T = -std::numeric_limits<double>::max();
+  double sum_T = 0.0;
+
+  for (int i = 0; i < temp_h.size(); ++i) {
+    const double T = temp_h[i];
+    min_T = std::min(min_T, T);
+    max_T = std::max(max_T, T);
+    sum_T += T;
+  }
+
+  std::cout << "[TEMP_STATS] itr=" << itr << " " << name
+            << " size=" << temp_h.size() << " min=" << min_T << " max=" << max_T
+            << " mean=" << sum_T / temp_h.size() << "\n";
+}
+double ComputeAbsoluteError(const mfem::ParMesh& pmesh,
+                            const mfem::ParGridFunction& x)
+{
+  double err2 = 0.0;
+
+  const int nv = pmesh.GetNV();
+
+  for (int v = 0; v < nv; ++v) {
+
+    const double* coord = pmesh.GetVertex(v);
+
+    double xpos = coord[0];
+
+    double exact = 270.0 + 30.0 * xpos;
+
+    double diff = x(v) - exact;
+
+    err2 += diff * diff;
+  }
+
+  return std::sqrt(err2 / nv);
+}
+void initializeFieldWithGids(pcms::FieldT<pcms::Real>* field,
+                             pcms::Real multiplier = 1.0)
+{
+  auto& layout = field->GetLayout();
+  auto gids = layout.GetGids();
+  const auto n = layout.GetNumOwnedDofHolder();
+
+  Omega_h::HostWrite<pcms::Real> ids(n);
+  PCMS_ALWAYS_ASSERT(n == gids.size());
+  Kokkos::parallel_for(
+    "init gid",
+    Kokkos::RangePolicy<pcms::HostMemorySpace::execution_space>(0, n),
+    [=](int i) { ids[i] = gids[i] * multiplier; });
+
+  field->SetDOFHolderData(pcms::make_const_array_view(ids));
+}
+void PrintTempStats(const mfem::ParMesh& pmesh, const mfem::ParGridFunction& x,
+                    const std::string& name, int itr)
+{
+  auto* pfes = x.ParFESpace();
+
+  mfem::Array<int> vdofs;
+
+  double minT = std::numeric_limits<double>::max();
+  double maxT = -std::numeric_limits<double>::max();
+  double sumT = 0.0;
+
+  const int nv = pmesh.GetNV();
+
+  for (int v = 0; v < nv; ++v) {
+    pfes->GetVertexDofs(v, vdofs);
+
+    if (vdofs.Size() == 0)
+      continue;
+
+    const int dof = vdofs[0];
+    const double T = x(dof);
+
+    minT = std::min(minT, T);
+    maxT = std::max(maxT, T);
+    sumT += T;
+  }
+
+  std::cout << "[TEMP_STATS] itr=" << itr << " " << name << " min=" << minT
+            << " max=" << maxT << " mean=" << sumT / nv << "\n";
+}
 } // namespace support
