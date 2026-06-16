@@ -206,43 +206,60 @@ EntOffsetsArray MFEMFieldsAdapterLayout::GetEntOffsets() const
   return offsets;
 }
 
-ReversePartitionMap2 MFEMFieldsAdapterLayout::GetReversePartitionMap(
-  const Partition& partition) const
+ReversePartitionMap2
+MFEMFieldsAdapterLayout::GetReversePartitionMap(
+    const Partition& partition) const
 {
   PCMS_FUNCTION_TIMER;
 
   ReversePartitionMap2 reverse_partition;
 
-  mfem::Vector vcoords;
-  const LO dim = pmesh_.Dimension();
+  const auto coords = GetDOFHolderCoordinates().GetCoordinates();
+  const auto owned = GetOwned();
 
-  pmesh_.GetVertices(vcoords);
+  const LO dim = static_cast<LO>(pmesh_.Dimension());
+  const LO n_dofs = GetNumOwnedDofHolder();
 
-  int local_index = 0;
-  std::array<double, 3> coord{0.0, 0.0, 0.0};
+  PCMS_ALWAYS_ASSERT(coords.extent(0) == static_cast<size_t>(n_dofs));
+  PCMS_ALWAYS_ASSERT(owned.size() == static_cast<size_t>(n_dofs));
 
-  for (int i = 0; i < vcoords.Size(); i += dim) {
-    const LO vertex_id = i / dim;
+  std::array<Real, 3> coord{0.0, 0.0, 0.0};
 
-    if (!HasMask() || mask_view_(vertex_id) > 0) {
-      std::copy(vcoords.begin() + i, vcoords.begin() + i + dim, coord.begin());
+  for (LO local_index = 0; local_index < n_dofs; ++local_index) {
+    if (!owned[local_index]) {
+      continue;
+    }
 
-      const auto dr = partition.GetDr(local_index, dim, coord);
+    coord[0] = coords(local_index, 0);
+    coord[1] = coords(local_index, 1);
+    coord[2] = (dim > 2) ? coords(local_index, 2) : 0.0;
 
-      reverse_partition[dr].indices.emplace_back(local_index);
+    const auto dr =
+        partition.GetDr(local_index, dim, coord);
 
-      ++local_index;
+    auto& mapping = reverse_partition[dr];
+
+    mapping.indices.emplace_back(local_index);
+
+    const int ent_dim = 0;
+    const auto n = mapping.ent_offsets.size();
+
+    for (size_t e = ent_dim + 1; e < n; ++e) {
+      mapping.ent_offsets[e] += 1;
     }
   }
 
   int counter = 0;
+
   for (const auto& [rank, mapping] : reverse_partition) {
-    std::printf("Vertex in Reverse Partition map, rank %d : %zu\n", rank,
+    std::printf("Vertex in Reverse Partition map, rank %d : %zu\n",
+                rank,
                 mapping.indices.size());
+
     counter += static_cast<int>(mapping.indices.size());
   }
 
-  PCMS_ALWAYS_ASSERT(counter == GetNumOwnedDofHolder());
+  PCMS_ALWAYS_ASSERT(counter == n_dofs);
 
   return reverse_partition;
 }

@@ -1,4 +1,5 @@
-#include "../include/mfem_field_adapter.h"
+#include "../include/mfem_adapter_layout.h"
+#include "../include/mfem_field_adapter2.h"
 
 #include <algorithm>
 #include <cmath>
@@ -306,19 +307,30 @@ int main(int argc, char** argv)
 
     set_true_gf_data(gf_data, pfes, true_before);
 
-    pcms::MFEMFieldAdapter adapter(std::string("mfem_field_adapter"),
-                                   pmesh,
-                                   pfes,
-                                   gf_data,
-                                   use_mask,
-                                   masked_attr);
+    pcms::MFEMFieldsAdapterLayout layout(
+        pmesh,
+        pfes,
+        gf_data,
+        {1, 0, 0, 0},
+        1,
+        pcms::CoordinateSystem::Cartesian,
+        use_mask,
+        masked_attr);
 
+    auto adapter_ptr = layout.CreateFieldReal();
+
+    auto& adapter =
+        *adapter_ptr;
     std::vector<int> permutation;
 
     // ============================================================
     // GID stats block
     // ============================================================
-    auto gids_adapter = adapter.GetGids();
+    auto gids_view = layout.GetGids();
+
+    std::vector<pcms::GO> gids_adapter(
+        gids_view.data_handle(),
+        gids_view.data_handle() + gids_view.size());
 
     TEST_ASSERT(!gids_adapter.empty(),
                 use_mask ? "GetGids returned empty vector for masked mode"
@@ -339,8 +351,9 @@ int main(int argc, char** argv)
 
     std::vector<double> buffer(gids_adapter.size());
 
-    auto packed_size = adapter.Serialize(make_array_view(buffer),
-                                         make_const_array_view(permutation));
+    auto packed_size = adapter.Serialize(
+    make_array_view(buffer),
+    make_const_array_view(permutation));
 
     printf(" Serialized size: %zu, Get gids size: %zu\n",
            static_cast<size_t>(packed_size),
