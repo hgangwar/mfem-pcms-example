@@ -23,6 +23,10 @@ add_library(coupling_support coupling_support.cpp)
 target_include_directories(coupling_support PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(coupling_support PUBLIC pcms::pcms mfem)
 
+add_library(mfem_adapter include/mfem_adapter_layout.cpp)
+target_link_libraries(mfem_adapter PUBLIC pcms::pcms mfem)
+
+
 ################### MFEM SOLVERS #########################
 #add_executable(fluxSolver fluxSolver.cpp)
 #target_link_libraries(fluxSolver PUBLIC mfem pcms::pcms)
